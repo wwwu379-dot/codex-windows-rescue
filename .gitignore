@@ -1,0 +1,13 @@
+# Local development and generated material
+work/
+outputs/
+.codex/
+.publish-git/
+*.log
+*.bak
+*.tmp
+
+# Local diagnostics and backups must never enter the public repository
+*support-report*.md
+*cleanup-backup*/
+*.disabled*/

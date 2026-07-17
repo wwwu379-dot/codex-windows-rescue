@@ -1,0 +1,36 @@
+{
+  "name": "codex-windows-rescue",
+  "version": "0.1.0+codex.20260717120000",
+  "description": "Safely diagnose and recover Codex on Windows, including API-to-ChatGPT migration, proxy failures, plugin problems, Chrome Native Host checks, and session restoration.",
+  "author": {
+    "name": "Codex Windows Rescue Contributors"
+  },
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "windows",
+    "diagnostics",
+    "recovery",
+    "chrome",
+    "migration"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Windows Rescue",
+    "shortDescription": "Safe Windows Codex diagnosis and recovery",
+    "longDescription": "Diagnose Windows Codex layer by layer, migrate safely from API or cc-switch setups to ChatGPT sign-in, repair approved user-side issues one step at a time, inspect Chrome Native Messaging, generate redacted support reports for installer failures, and restore only session history from backups.",
+    "developerName": "Codex Windows Rescue Contributors",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Diagnose my Windows Codex problem without changing anything first.",
+      "Help me migrate from API or cc-switch to ChatGPT sign-in safely.",
+      "Check why Codex Chrome control cannot connect.",
+      "Generate a redacted support report for my Chrome Native Host failure without changing anything."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

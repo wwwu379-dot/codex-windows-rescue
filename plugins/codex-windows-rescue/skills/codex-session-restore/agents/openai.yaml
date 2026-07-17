@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Session Restore"
+  short_description: "Restore Codex sessions without old config or plugin state"
+  default_prompt: "Use $codex-session-restore to preview and restore only sessions from my trusted backups."

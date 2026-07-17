@@ -1,0 +1,4 @@
+interface:
+  display_name: "API to ChatGPT Migration"
+  short_description: "Migrate API or cc-switch setups to ChatGPT safely"
+  default_prompt: "Use $codex-api-to-chatgpt-migration to safely migrate Codex from API or cc-switch to ChatGPT sign-in."

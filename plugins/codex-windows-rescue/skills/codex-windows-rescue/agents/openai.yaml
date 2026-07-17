@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Windows Rescue"
+  short_description: "Guide safe Windows Codex diagnosis and recovery"
+  default_prompt: "Use $codex-windows-rescue to diagnose my Windows Codex problem safely before making changes."

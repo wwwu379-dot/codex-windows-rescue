@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Windows Read-only Doctor"
+  short_description: "Audit Windows Codex without changing local state"
+  default_prompt: "Use $codex-windows-doctor to audit my Windows Codex environment without changing anything."

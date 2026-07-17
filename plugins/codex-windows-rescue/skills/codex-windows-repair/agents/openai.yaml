@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Windows Safe Repair"
+  short_description: "Apply approved Windows Codex repairs one step at a time"
+  default_prompt: "Use $codex-windows-repair to explain, apply, and verify one approved repair at a time."
