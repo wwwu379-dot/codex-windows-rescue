@@ -30,6 +30,7 @@ The plugin classifies each finding before proposing a change. It does not treat 
 
 ## What it includes
 
+- A standalone read-only emergency audit for cases where neither Desktop nor CLI can host the plugin.
 - A read-only Windows Codex environment audit.
 - A guided API/provider-to-ChatGPT migration workflow.
 - Proxy inheritance, duplicate-client, process-lock, and selective-state checks.
@@ -54,6 +55,19 @@ The plugin:
 
 ## Recommended first use
 
+### If Codex cannot answer at all
+
+The plugin cannot run inside a Codex session that never starts. Use the standalone [emergency kit](emergency-kit/README.md) first:
+
+1. Download and extract the complete repository ZIP.
+2. Double-click `emergency-kit/Run-CodexEmergencyAudit.cmd`.
+3. Send the generated Markdown report to web ChatGPT.
+4. When either Desktop or CLI works again, install this plugin and continue with the interactive workflow.
+
+This closes the bootstrap gap: the emergency kit is a read-only diagnostic bridge, while the plugin remains the explain-and-confirm repair layer.
+
+### If Desktop or CLI still works
+
 Install the plugin, start a new Codex task, and begin with a read-only request:
 
 ```text
@@ -74,7 +88,7 @@ Check why Codex Chrome control cannot connect. Start read-only and do not create
 
 ## Install from GitHub
 
-After this repository is public, add its personal marketplace and install the plugin:
+Add its personal marketplace and install the plugin:
 
 ```powershell
 codex plugin marketplace add https://github.com/wwwu379-dot/codex-windows-rescue.git --sparse .agents/plugins
@@ -93,7 +107,7 @@ It deliberately does **not** invent or manually write `com.openai.codexextension
 
 The marketplace definition is at `.agents/plugins/marketplace.json`; the plugin itself is under `plugins/codex-windows-rescue`.
 
-The public repository should contain only the marketplace, plugin source, README, license, and security policy. Keep local work directories, logs, backups, test fixtures, `.codex`, and generated outputs outside the published tree.
+The public repository should contain only the marketplace, plugin source, emergency kit, tests, README, license, and security policy. Keep local work directories, logs, backups, `.codex`, and generated outputs outside the published tree.
 
 Validate the plugin with the official Codex plugin validation tools before installing it into a live environment.
 

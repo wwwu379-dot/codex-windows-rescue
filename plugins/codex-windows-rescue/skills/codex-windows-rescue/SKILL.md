@@ -11,6 +11,10 @@ Coordinate the smallest safe workflow that matches the user's symptom. Do not tr
 
 Read [references/safety-protocol.md](references/safety-protocol.md) before proposing any mutation. Apply its explain-confirm-act-verify contract to every sub-skill and command.
 
+## Bootstrap boundary
+
+If the user's Codex Desktop cannot answer and no CLI session can load this plugin, do not pretend the plugin can repair its own unavailable host. Direct the user to the repository's standalone `emergency-kit/Run-CodexEmergencyAudit.cmd`. It creates a redacted read-only report that can be interpreted in web ChatGPT. Resume the plugin workflow only after Desktop or CLI can host an agent again.
+
 ## Route the task
 
 1. Start with `$codex-windows-doctor` for a read-only environment snapshot.
@@ -31,6 +35,7 @@ Read [references/decision-tree.md](references/decision-tree.md) when symptoms ov
 - Never remove `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, v2rayN, or another shared API key merely because it appears in an audit.
 - Never hand-create OpenAI Chrome Native Host manifests or registry entries. If the official setup repeatedly fails, produce a redacted support report and stop.
 - Do not claim a product bug caused unrelated historical residue unless evidence connects them.
+- Do not tell a user with an unusable Desktop and CLI to install this plugin as their first step; use the standalone emergency audit bridge.
 
 ## Finish
 

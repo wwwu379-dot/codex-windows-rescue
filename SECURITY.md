@@ -10,7 +10,7 @@ Do not commit or attach any of the following:
 - Chrome profiles, browsing history, bookmarks, or extension storage.
 - Cleanup logs, backup directories, or screenshots containing secrets.
 
-The plugin is designed to redact its Chrome support report and to keep diagnostics local. It does not submit reports or upload data automatically.
+The plugin and standalone emergency kit are designed to redact reports and keep diagnostics local. They do not submit reports or upload data automatically. Emergency JSON snapshots should remain private unless trusted support specifically requests one.
 
 ## Reporting a security issue
 
