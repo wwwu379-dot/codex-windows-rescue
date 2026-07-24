@@ -65,12 +65,496 @@ function Add-Line {
     [void]$Lines.Add($Text)
 }
 
-$repositoryRoot = Split-Path -Parent $PSScriptRoot
-$doctorScript = Join-Path $repositoryRoot 'plugins\codex-windows-rescue\skills\codex-windows-doctor\scripts\Get-CodexWindowsSnapshot.ps1'
-$chromeScript = Join-Path $repositoryRoot 'plugins\codex-windows-rescue\skills\codex-chrome-doctor\scripts\Test-CodexChromeBridge.ps1'
-foreach ($requiredScript in @($doctorScript, $chromeScript)) {
-    if (-not (Test-Path -LiteralPath $requiredScript -PathType Leaf)) {
-        throw "The downloaded repository is incomplete. Missing: $requiredScript"
+function Test-PathReadSafe {
+    param(
+        [string]$Path,
+        [ValidateSet('Any', 'Container', 'Leaf')]
+        [string]$PathType = 'Any'
+    )
+    try {
+        if ($PathType -eq 'Any') {
+            return [bool](Test-Path -LiteralPath $Path -ErrorAction Stop)
+        }
+        return [bool](Test-Path -LiteralPath $Path -PathType $PathType -ErrorAction Stop)
+    }
+    catch {
+        return $null
+    }
+}
+
+function Get-SafeEndpoint {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
+    try {
+        $uri = [Uri]$Value
+        if ($uri.IsAbsoluteUri) {
+            $port = if ($uri.IsDefaultPort) { '' } else { ':' + $uri.Port }
+            return '{0}://{1}{2}' -f $uri.Scheme, $uri.Host, $port
+        }
+    }
+    catch {}
+    return '<present; value omitted>'
+}
+
+function Get-EnvironmentSummary {
+    param([string]$Name, [switch]$Secret, [switch]$Endpoint)
+    $scopes = foreach ($scope in @('Process', 'User', 'Machine')) {
+        $value = [Environment]::GetEnvironmentVariable($Name, $scope)
+        [PSCustomObject]@{
+            Scope = $scope
+            Present = -not [string]::IsNullOrWhiteSpace($value)
+            SafeValue = if ([string]::IsNullOrWhiteSpace($value) -or $Secret) {
+                $null
+            }
+            elseif ($Endpoint) {
+                Get-SafeEndpoint -Value $value
+            }
+            else {
+                '<present; value omitted>'
+            }
+        }
+    }
+    return [PSCustomObject]@{ Name = $Name; Scopes = @($scopes) }
+}
+
+function Get-ConfigKeyMatches {
+    param([string]$Path)
+    if (-not (Test-PathReadSafe -Path $Path -PathType Leaf)) { return @() }
+
+    $patterns = @(
+        '^\s*(model_provider|openai_base_url|chatgpt_base_url|base_url|api_key|api_key_env_var|forced_login_method|profile)\s*=',
+        '^\s*\[(model_providers(?:\.[^\]]+)?|profiles(?:\.[^\]]+)?)\s*\]',
+        '^\s*(env_key|experimental_bearer_token|requires_openai_auth)\s*='
+    )
+    $lineNumber = 0
+    $matches = foreach ($line in Get-Content -LiteralPath $Path -ErrorAction Stop) {
+        $lineNumber++
+        if ($line.TrimStart().StartsWith('#')) { continue }
+        foreach ($pattern in $patterns) {
+            if ($line -match $pattern) {
+                [PSCustomObject]@{ Line = $lineNumber; Key = $Matches[1] }
+                break
+            }
+        }
+    }
+    return @($matches)
+}
+
+function Get-PortSummary {
+    param([int]$Port)
+    try {
+        $items = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop)
+        return [PSCustomObject]@{
+            Port = $Port
+            Listening = $items.Count -gt 0
+            OwningProcessIds = @($items | Select-Object -ExpandProperty OwningProcess -Unique)
+        }
+    }
+    catch {
+        return [PSCustomObject]@{ Port = $Port; Listening = $false; OwningProcessIds = @() }
+    }
+}
+
+function Get-IndicatorTags {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return @() }
+
+    $tags = @()
+    if ($Text -match '(?i)api-switch|[\\/]\.api-switch[\\/]') { $tags += 'API-Switch' }
+    if ($Text -match '(?i)cc-?switch|ccswitch') { $tags += 'cc-switch' }
+    if ($Text -match '(?i)deepseek') { $tags += 'DeepSeek' }
+    if ($Text -match '(?i)proxy-start\.vbs') { $tags += 'proxy-start.vbs' }
+    if ($Text -match '(?i)(?:^|[\\/])codex(?:\.cmd|\.ps1|\.exe)?(?:\s|$|[\\/])') { $tags += 'Codex-wrapper' }
+    return @($tags | Sort-Object -Unique)
+}
+
+function Get-PersistenceIndicators {
+    $findings = @()
+
+    foreach ($location in @(
+        [PSCustomObject]@{ Scope = 'User'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' },
+        [PSCustomObject]@{ Scope = 'Machine'; Path = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run' },
+        [PSCustomObject]@{ Scope = 'Machine32'; Path = 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run' }
+    )) {
+        try {
+            $item = Get-ItemProperty -LiteralPath $location.Path -ErrorAction Stop
+            foreach ($property in $item.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' }) {
+                $tags = @(Get-IndicatorTags -Text ([string]$property.Value))
+                if ($tags.Count -gt 0) {
+                    $findings += [PSCustomObject]@{
+                        Kind = 'RegistryRun'
+                        Scope = $location.Scope
+                        Name = $property.Name
+                        Indicators = $tags
+                        CommandReturned = $false
+                    }
+                }
+            }
+        }
+        catch {}
+    }
+
+    foreach ($startup in @(
+        [Environment]::GetFolderPath('Startup'),
+        [Environment]::GetFolderPath('CommonStartup')
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) {
+        try {
+            foreach ($item in Get-ChildItem -LiteralPath $startup -File -ErrorAction Stop) {
+                $tags = @(Get-IndicatorTags -Text $item.Name)
+                if ($tags.Count -gt 0) {
+                    $findings += [PSCustomObject]@{
+                        Kind = 'StartupFolder'
+                        Scope = if ($startup -eq [Environment]::GetFolderPath('Startup')) { 'User' } else { 'Machine' }
+                        Name = $item.Name
+                        Indicators = $tags
+                        CommandReturned = $false
+                    }
+                }
+            }
+        }
+        catch {}
+    }
+
+    try {
+        foreach ($task in Get-ScheduledTask -ErrorAction Stop) {
+            $actionText = @($task.Actions | ForEach-Object { '{0} {1}' -f $_.Execute, $_.Arguments }) -join ' '
+            $tags = @(Get-IndicatorTags -Text $actionText)
+            if ($tags.Count -gt 0) {
+                $findings += [PSCustomObject]@{
+                    Kind = 'ScheduledTask'
+                    Scope = 'System'
+                    Name = '{0}{1}' -f $task.TaskPath, $task.TaskName
+                    Indicators = $tags
+                    CommandReturned = $false
+                }
+            }
+        }
+    }
+    catch {}
+
+    try {
+        foreach ($service in Get-CimInstance Win32_Service -ErrorAction Stop) {
+            $tags = @(Get-IndicatorTags -Text ('{0} {1} {2}' -f $service.Name, $service.DisplayName, $service.PathName))
+            if ($tags.Count -gt 0) {
+                $findings += [PSCustomObject]@{
+                    Kind = 'Service'
+                    Scope = 'System'
+                    Name = $service.Name
+                    DisplayName = $service.DisplayName
+                    State = $service.State
+                    StartMode = $service.StartMode
+                    Indicators = $tags
+                    CommandReturned = $false
+                }
+            }
+        }
+    }
+    catch {}
+
+    return @($findings)
+}
+
+function Get-WindowsCodexSnapshot {
+    param([string[]]$Roots)
+
+    $codexHome = [Environment]::GetEnvironmentVariable('CODEX_HOME', 'Process')
+    if ([string]::IsNullOrWhiteSpace($codexHome)) {
+        $codexHome = [Environment]::GetEnvironmentVariable('CODEX_HOME', 'User')
+    }
+    if ([string]::IsNullOrWhiteSpace($codexHome)) {
+        $codexHome = Join-Path $env:USERPROFILE '.codex'
+    }
+    $codexHome = [IO.Path]::GetFullPath($codexHome)
+
+    $configPaths = @()
+    $mainConfig = Join-Path $codexHome 'config.toml'
+    if (Test-PathReadSafe -Path $mainConfig -PathType Leaf) { $configPaths += $mainConfig }
+    foreach ($root in $Roots) {
+        if ([string]::IsNullOrWhiteSpace($root)) { continue }
+        $projectConfig = Join-Path ([IO.Path]::GetFullPath($root)) '.codex\config.toml'
+        if (Test-PathReadSafe -Path $projectConfig -PathType Leaf) { $configPaths += $projectConfig }
+    }
+    $configuration = @($configPaths | Sort-Object -Unique | ForEach-Object {
+        [PSCustomObject]@{ Path = $_; SensitiveKeys = @(Get-ConfigKeyMatches -Path $_) }
+    })
+
+    $commandSources = @()
+    try {
+        $commandSources = @(Get-Command codex -All -ErrorAction Stop | ForEach-Object {
+            [PSCustomObject]@{
+                CommandType = $_.CommandType.ToString()
+                Path = if ($_.Path) { $_.Path } else { $_.Source }
+                Version = if ($_.Version) { $_.Version.ToString() } else { $null }
+            }
+        })
+    }
+    catch {}
+
+    $appxPackages = @()
+    try {
+        $appxPackages = @(Get-AppxPackage -Name OpenAI.Codex -ErrorAction Stop | ForEach-Object {
+            [PSCustomObject]@{
+                Name = $_.Name
+                Version = $_.Version.ToString()
+                InstallLocation = $_.InstallLocation
+            }
+        })
+    }
+    catch {}
+
+    $processes = @()
+    try {
+        $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object {
+            $category = $null
+            if ($_.Name -match '^(codex|chatgpt)(\.exe)?$') { $category = 'Codex' }
+            elseif ($_.CommandLine -and $_.CommandLine -match '[\\/]\.api-switch[\\/]proxy\.js') { $category = 'API-Switch' }
+            elseif (($_.Name -match 'cc-?switch|ccswitch') -or ($_.CommandLine -and $_.CommandLine -match 'cc-?switch|ccswitch')) { $category = 'cc-switch' }
+            if ($category) {
+                [PSCustomObject]@{
+                    ProcessId = [int]$_.ProcessId
+                    Name = $_.Name
+                    Category = $category
+                    ExecutablePath = $_.ExecutablePath
+                }
+            }
+        })
+    }
+    catch {}
+
+    $knownPaths = @(
+        (Join-Path $env:USERPROFILE '.api-switch'),
+        (Join-Path $env:USERPROFILE '.api-switch.yaml'),
+        (Join-Path $env:USERPROFILE '.cc-switch'),
+        (Join-Path $env:LOCALAPPDATA 'com.ccswitch.desktop'),
+        (Join-Path $env:APPDATA 'com.ccswitch.desktop'),
+        (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\proxy-start.vbs'),
+        (Join-Path $env:LOCALAPPDATA 'OpenAI\Codex'),
+        (Join-Path $env:LOCALAPPDATA 'Packages\OpenAI.Codex_2p2nqsd0c76g0')
+    )
+    $candidatePaths = @($knownPaths | ForEach-Object {
+        $exists = Test-PathReadSafe -Path $_
+        [PSCustomObject]@{
+            Path = $_
+            Exists = $exists
+            ProbeStatus = if ($null -eq $exists) { 'AccessDeniedOrUnavailable' } else { 'Readable' }
+        }
+    })
+
+    $environment = @()
+    foreach ($name in @(
+        'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
+        'OPENAI_BASE_URL', 'OPENAI_API_BASE', 'CHATGPT_BASE_URL',
+        'DEEPSEEK_BASE_URL', 'CODEX_BASE_URL', 'CODEX_HOME', 'CODEX_SQLITE_HOME'
+    )) {
+        $environment += Get-EnvironmentSummary -Name $name -Endpoint:($name -notin @('NO_PROXY', 'CODEX_HOME', 'CODEX_SQLITE_HOME'))
+    }
+    foreach ($name in @('OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN')) {
+        $environment += Get-EnvironmentSummary -Name $name -Secret
+    }
+
+    $pluginSources = Join-Path $codexHome 'plugins\sources'
+    $pluginCache = Join-Path $codexHome 'plugins\cache'
+    $sessionPath = Join-Path $codexHome 'sessions'
+    $archivedPath = Join-Path $codexHome 'archived_sessions'
+
+    $os = $null
+    try {
+        $osInfo = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $os = [PSCustomObject]@{
+            Caption = $osInfo.Caption
+            Version = $osInfo.Version
+            BuildNumber = $osInfo.BuildNumber
+        }
+    }
+    catch {}
+
+    return [PSCustomObject]@{
+        SchemaVersion = '1.0'
+        CollectedAt = (Get-Date).ToString('o')
+        OperatingSystem = $os
+        CodexHome = $codexHome
+        CodexHomeExists = Test-PathReadSafe -Path $codexHome -PathType Container
+        AuthStorage = [PSCustomObject]@{
+            AuthFileExists = Test-PathReadSafe -Path (Join-Path $codexHome 'auth.json') -PathType Leaf
+            ContentsRead = $false
+        }
+        CommandSources = $commandSources
+        AppxPackages = $appxPackages
+        Configuration = $configuration
+        Environment = @($environment)
+        RelevantProcesses = $processes
+        PersistenceIndicators = @(Get-PersistenceIndicators)
+        Ports = @((Get-PortSummary -Port 10808), (Get-PortSummary -Port 15721))
+        CandidatePaths = $candidatePaths
+        Plugins = [PSCustomObject]@{
+            SourcesPath = $pluginSources
+            SourcesExist = Test-PathReadSafe -Path $pluginSources -PathType Container
+            SourceCount = @(Get-ChildItem -LiteralPath $pluginSources -Directory -ErrorAction SilentlyContinue).Count
+            CachePath = $pluginCache
+            CacheExists = Test-PathReadSafe -Path $pluginCache -PathType Container
+            MarketplaceCount = @(Get-ChildItem -LiteralPath $pluginCache -Directory -ErrorAction SilentlyContinue).Count
+        }
+        Sessions = [PSCustomObject]@{
+            SessionsPath = $sessionPath
+            SessionFileCount = @(Get-ChildItem -LiteralPath $sessionPath -File -Recurse -ErrorAction SilentlyContinue).Count
+            ArchivedSessionsPath = $archivedPath
+            ArchivedFileCount = @(Get-ChildItem -LiteralPath $archivedPath -File -Recurse -ErrorAction SilentlyContinue).Count
+        }
+    }
+}
+
+function Get-ChromeBridgeSnapshot {
+    param([string]$ExtensionId = 'hehggadaopoacecdllhhajmbjkdcmajg')
+
+    $chromeCandidates = @(
+        (Join-Path ${env:ProgramFiles} 'Google\Chrome\Application\chrome.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe')
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $chromePath = @($chromeCandidates | Where-Object {
+        Test-PathReadSafe -Path $_ -PathType Leaf
+    } | Select-Object -First 1)
+    $chrome = if ($chromePath.Count -gt 0) {
+        $item = Get-Item -LiteralPath $chromePath[0]
+        [PSCustomObject]@{
+            Installed = $true
+            Path = $item.FullName
+            Version = $item.VersionInfo.ProductVersion
+        }
+    }
+    else {
+        [PSCustomObject]@{ Installed = $false; Path = $null; Version = $null }
+    }
+
+    $extensionInstalls = @()
+    $userData = Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'
+    if (Test-PathReadSafe -Path $userData -PathType Container) {
+        $profiles = @(Get-ChildItem -LiteralPath $userData -Directory -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -eq 'Default' -or $_.Name -like 'Profile *'
+        })
+        foreach ($profile in $profiles) {
+            $extensionRoot = Join-Path $profile.FullName (Join-Path 'Extensions' $ExtensionId)
+            if (Test-PathReadSafe -Path $extensionRoot -PathType Container) {
+                foreach ($version in Get-ChildItem -LiteralPath $extensionRoot -Directory -ErrorAction SilentlyContinue) {
+                    $extensionInstalls += [PSCustomObject]@{
+                        Profile = $profile.Name
+                        VersionDirectory = $version.Name
+                        ManifestExists = Test-PathReadSafe -Path (Join-Path $version.FullName 'manifest.json') -PathType Leaf
+                    }
+                }
+            }
+        }
+    }
+
+    $codexHome = [Environment]::GetEnvironmentVariable('CODEX_HOME', 'Process')
+    if ([string]::IsNullOrWhiteSpace($codexHome)) { $codexHome = Join-Path $env:USERPROFILE '.codex' }
+    $pluginCache = Join-Path $codexHome 'plugins\cache'
+    $pluginRoots = @()
+    if (Test-PathReadSafe -Path $pluginCache -PathType Container) {
+        $browserClients = @(Get-ChildItem -LiteralPath $pluginCache -Filter 'browser-client.mjs' -File -Recurse -ErrorAction SilentlyContinue | Where-Object {
+            $_.FullName -match '[\\/]chrome[\\/]'
+        })
+        foreach ($client in $browserClients) {
+            $root = Split-Path -Parent (Split-Path -Parent $client.FullName)
+            $pluginRoots += [PSCustomObject]@{
+                Root = $root
+                BrowserClient = Test-PathReadSafe -Path (Join-Path $root 'scripts\browser-client.mjs') -PathType Leaf
+                Checker = Test-PathReadSafe -Path (Join-Path $root 'scripts\check-native-host-manifest.js') -PathType Leaf
+                InstallScript = Test-PathReadSafe -Path (Join-Path $root 'scripts\installManifest.mjs') -PathType Leaf
+                HostExecutable = Test-PathReadSafe -Path (Join-Path $root 'extension-host\windows\x64\extension-host.exe') -PathType Leaf
+            }
+        }
+    }
+    $pluginRoots = @($pluginRoots | Sort-Object Root -Unique)
+
+    $registryPaths = @(
+        'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.openai.codexextension',
+        'HKLM:\Software\Google\Chrome\NativeMessagingHosts\com.openai.codexextension',
+        'HKLM:\Software\WOW6432Node\Google\Chrome\NativeMessagingHosts\com.openai.codexextension'
+    )
+    $registryEntries = @()
+    $manifestCandidates = @()
+    foreach ($path in $registryPaths) {
+        $exists = Test-PathReadSafe -Path $path
+        $manifestPath = $null
+        if ($exists) {
+            try {
+                $manifestPath = (Get-Item -LiteralPath $path -ErrorAction Stop).GetValue('')
+                if (-not [string]::IsNullOrWhiteSpace($manifestPath)) { $manifestCandidates += $manifestPath }
+            }
+            catch {}
+        }
+        $registryEntries += [PSCustomObject]@{
+            Path = $path
+            Exists = $exists
+            ManifestPath = $manifestPath
+        }
+    }
+    $manifestCandidates += Join-Path $env:LOCALAPPDATA 'OpenAI\extension\com.openai.codexextension.json'
+    $manifestCandidates = @($manifestCandidates | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    } | Sort-Object -Unique)
+
+    $manifestResults = @()
+    foreach ($candidate in $manifestCandidates) {
+        $expanded = [Environment]::ExpandEnvironmentVariables($candidate)
+        $exists = Test-PathReadSafe -Path $expanded -PathType Leaf
+        $validJson = $false
+        $hostPath = $null
+        $hostExists = $false
+        $originMatches = $false
+        $parseError = $null
+        if ($exists) {
+            try {
+                $manifest = Get-Content -Raw -LiteralPath $expanded -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                $validJson = $true
+                $hostPath = $manifest.path
+                if (-not [string]::IsNullOrWhiteSpace($hostPath)) {
+                    $hostPath = [Environment]::ExpandEnvironmentVariables($hostPath)
+                    $hostExists = Test-PathReadSafe -Path $hostPath -PathType Leaf
+                }
+                $originMatches = @($manifest.allowed_origins) -contains "chrome-extension://$ExtensionId/"
+            }
+            catch {
+                $parseError = 'Manifest JSON could not be parsed; error details omitted.'
+            }
+        }
+        $manifestResults += [PSCustomObject]@{
+            Path = $expanded
+            Exists = $exists
+            ValidJson = $validJson
+            HostPath = $hostPath
+            HostExists = $hostExists
+            ExpectedOriginPresent = $originMatches
+            ParseError = $parseError
+        }
+    }
+
+    $extensionPresent = $extensionInstalls.Count -gt 0
+    $pluginPresent = @($pluginRoots | Where-Object { $_.BrowserClient -and $_.HostExecutable }).Count -gt 0
+    $registrationPresent = @($registryEntries | Where-Object { $_.Exists }).Count -gt 0
+    $validManifest = @($manifestResults | Where-Object {
+        $_.Exists -and $_.ValidJson -and $_.HostExists -and $_.ExpectedOriginPresent
+    }).Count -gt 0
+    $classification = if (-not $chrome.Installed) { 'chrome-missing' }
+    elseif (-not $extensionPresent) { 'extension-missing' }
+    elseif (-not $pluginPresent) { 'plugin-files-missing' }
+    elseif (-not $registrationPresent -or @($manifestResults | Where-Object Exists).Count -eq 0) { 'native-host-missing' }
+    elseif (-not $validManifest) { 'native-host-invalid' }
+    else { 'ready-for-runtime-test' }
+
+    return [PSCustomObject]@{
+        SchemaVersion = '1.0'
+        CollectedAt = (Get-Date).ToString('o')
+        ReadOnly = $true
+        Classification = $classification
+        Chrome = $chrome
+        ExtensionId = $ExtensionId
+        ExtensionInstalls = $extensionInstalls
+        PluginRoots = $pluginRoots
+        RegistryEntries = $registryEntries
+        Manifests = $manifestResults
+        ManualRegistryOrManifestCreationSupported = $false
     }
 }
 
@@ -89,11 +573,11 @@ if (-not (Test-Path -LiteralPath $outputRoot -PathType Container)) {
 }
 
 Write-Host 'Running a read-only Codex Windows audit. Existing system state will not be changed.' -ForegroundColor Cyan
-$windows = ((& $doctorScript -ProjectRoots $ProjectRoots) -join [Environment]::NewLine) | ConvertFrom-Json
+$windows = Get-WindowsCodexSnapshot -Roots $ProjectRoots
 $chrome = $null
 $chromeError = $null
 try {
-    $chrome = ((& $chromeScript) -join [Environment]::NewLine) | ConvertFrom-Json
+    $chrome = Get-ChromeBridgeSnapshot
 }
 catch {
     $chromeError = Convert-ToSafeString $_.Exception.Message

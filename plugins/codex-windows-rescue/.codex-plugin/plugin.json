@@ -1,6 +1,6 @@
 {
   "name": "codex-windows-rescue",
-  "version": "0.1.0+codex.20260722025950",
+  "version": "0.1.0+codex.20260724080303",
   "description": "Safely diagnose and recover Codex on Windows, with a standalone emergency audit for cases where Desktop and CLI cannot load the plugin.",
   "author": {
     "name": "Codex Windows Rescue Contributors"

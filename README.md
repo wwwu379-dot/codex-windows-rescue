@@ -59,10 +59,11 @@ The plugin:
 
 The plugin cannot run inside a Codex session that never starts. Use the standalone [emergency kit](emergency-kit/README.md) first:
 
-1. Download and extract the complete repository ZIP.
-2. Double-click `emergency-kit/Run-CodexEmergencyAudit.cmd`.
-3. Send the generated Markdown report to web ChatGPT.
-4. When either Desktop or CLI works again, install this plugin and continue with the interactive workflow.
+1. Download and extract the repository ZIP.
+2. Copy the self-contained `emergency-kit` folder anywhere you like, keeping its three files together.
+3. Double-click `emergency-kit/Run-CodexEmergencyAudit.cmd`.
+4. Send the generated Markdown report to web ChatGPT.
+5. When either Desktop or CLI works again, install this plugin and continue with the interactive workflow.
 
 This closes the bootstrap gap: the emergency kit is a read-only diagnostic bridge, while the plugin remains the explain-and-confirm repair layer.
 

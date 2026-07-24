@@ -7,7 +7,9 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $emergencyScript = Join-Path $repositoryRoot 'emergency-kit\Start-CodexEmergencyAudit.ps1'
 $emergencyLauncher = Join-Path $repositoryRoot 'emergency-kit\Run-CodexEmergencyAudit.cmd'
-$testOutput = Join-Path ([IO.Path]::GetTempPath()) ('codex-emergency-kit-test-' + [Guid]::NewGuid().ToString('N'))
+$testRoot = Join-Path ([IO.Path]::GetTempPath()) ('codex-emergency-kit-test-' + [Guid]::NewGuid().ToString('N'))
+$isolatedKit = Join-Path $testRoot 'emergency-kit'
+$testOutput = Join-Path $testRoot 'reports'
 $previousApiKey = $env:OPENAI_API_KEY
 $previousProxy = $env:HTTP_PROXY
 
@@ -35,11 +37,19 @@ try {
         throw 'Emergency audit contains a forbidden mutation command.'
     }
 
+    [void](New-Item -ItemType Directory -Path $testRoot -Force)
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'emergency-kit') -Destination $isolatedKit -Recurse
+    $isolatedScript = Join-Path $isolatedKit 'Start-CodexEmergencyAudit.ps1'
+
+    if (Test-Path -LiteralPath (Join-Path $testRoot 'plugins')) {
+        throw 'The isolated emergency-kit test unexpectedly contains the plugin repository.'
+    }
+
     [void](New-Item -ItemType Directory -Path $testOutput -Force)
     $env:OPENAI_API_KEY = 'TEST-SECRET-MUST-NOT-APPEAR'
     $env:HTTP_PROXY = 'http://test-user:test-password@127.0.0.1:10808'
 
-    $result = & $emergencyScript -OutputDirectory $testOutput -NoPause
+    $result = & $isolatedScript -OutputDirectory $testOutput -NoPause
 
     if (-not (Test-Path -LiteralPath $result.ReportPath -PathType Leaf)) {
         throw 'The human-readable emergency report was not created.'
@@ -85,7 +95,7 @@ try {
 finally {
     $env:OPENAI_API_KEY = $previousApiKey
     $env:HTTP_PROXY = $previousProxy
-    if (Test-Path -LiteralPath $testOutput) {
-        Remove-Item -LiteralPath $testOutput -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $testRoot) {
+        Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
