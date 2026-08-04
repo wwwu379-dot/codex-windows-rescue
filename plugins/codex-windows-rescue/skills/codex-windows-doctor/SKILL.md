@@ -1,6 +1,6 @@
 ---
 name: codex-windows-doctor
-description: Perform a read-only Windows Codex audit covering installation sources, versions, authentication mode without reading credentials, proxy inheritance, WebSocket prerequisites, configuration layers, custom providers, cc-switch/API-Switch residue, running processes and ports, plugins, Chrome Native Host registration, and local session counts. Use before any Codex repair, reset, reinstall, migration, or residue cleanup.
+description: Perform a read-only Windows Codex audit covering installation sources, versions, authentication mode without reading credentials, version-aware proxy behavior, WebSocket prerequisites, configuration layers, custom providers, cc-switch/API-Switch residue, running processes and ports, plugins, Chrome Native Host registration, and transcript/index state. Use before any Codex repair, reset, reinstall, migration, or residue cleanup.
 ---
 
 # Codex Windows Doctor
@@ -24,6 +24,10 @@ Classify every finding as:
 - **External/product boundary:** cannot be safely fixed by local cleanup.
 
 Do not label `.codex`, AppX state, runtime caches, or running Codex processes as residue merely because they exist while Codex is installed.
+
+Do not assume an explicit proxy workaround is permanently required merely because it fixed an older build. Record the current client version and retest current built-in proxy handling before recommending process-scoped `HTTP_PROXY` or `HTTPS_PROXY`; persist variables only after a controlled test proves they are still necessary.
+
+Treat `sessions`/`archived_sessions` transcript counts separately from task discovery state. The snapshot inventories index and SQLite sidecars without reading them; their presence is evidence for follow-up, not permission to merge or replace current state.
 
 Read [references/report-schema.md](references/report-schema.md) before writing the report.
 

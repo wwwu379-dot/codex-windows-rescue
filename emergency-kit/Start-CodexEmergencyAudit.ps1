@@ -254,6 +254,71 @@ function Get-PersistenceIndicators {
     return @($findings)
 }
 
+function Get-SessionMetadataInventory {
+    param([string]$CodexHome)
+
+    $items = @()
+    foreach ($name in @('session_index.jsonl', 'history.jsonl', '.codex-global-state.json')) {
+        $path = Join-Path $CodexHome $name
+        if (Test-PathReadSafe -Path $path -PathType Leaf) {
+            $file = Get-Item -LiteralPath $path
+            $items += [PSCustomObject]@{ Name = $name; Kind = 'File'; Bytes = [long]$file.Length; ItemCount = $null; ContentsRead = $false }
+        }
+    }
+    foreach ($file in Get-ChildItem -LiteralPath $CodexHome -File -Filter 'state_*.sqlite*' -ErrorAction SilentlyContinue) {
+        $items += [PSCustomObject]@{ Name = $file.Name; Kind = 'File'; Bytes = [long]$file.Length; ItemCount = $null; ContentsRead = $false }
+    }
+    foreach ($name in @('session_backups', 'generated_images')) {
+        $path = Join-Path $CodexHome $name
+        if (Test-PathReadSafe -Path $path -PathType Container) {
+            $items += [PSCustomObject]@{
+                Name = $name
+                Kind = 'Directory'
+                Bytes = $null
+                ItemCount = @(Get-ChildItem -LiteralPath $path -File -Recurse -ErrorAction SilentlyContinue).Count
+                ContentsRead = $false
+            }
+        }
+    }
+    return @($items | Sort-Object Name -Unique)
+}
+
+function Get-RuntimeSignalSummary {
+    param([string]$Root, [int]$FileLimit = 20)
+
+    $definitions = @(
+        [PSCustomObject]@{ Name = 'ExtensionBackendUnavailable'; Pattern = 'Browser is not available:\s*extension|extension backend.{0,80}unavailable' },
+        [PSCustomObject]@{ Name = 'OpenTabsTimeout'; Pattern = 'browser\.user\.openTabs|openTabs.{0,80}(timed out|timeout)' },
+        [PSCustomObject]@{ Name = 'PluginCacheFileLock'; Pattern = 'plugin_cache_windows_file_lock|bundled_plugins_.{0,120}(Access is denied|os error 5)' },
+        [PSCustomObject]@{ Name = 'NativeHostInstallRequested'; Pattern = 'chrome_native_host_install_requested' },
+        [PSCustomObject]@{ Name = 'BuiltInBrowserReady'; Pattern = 'browser_use_iab_backend_startup_ready|iab backend startup ready' },
+        [PSCustomObject]@{ Name = 'ExtensionBackendReady'; Pattern = '(extension|chrome).{0,80}backend.{0,80}startup.{0,40}ready' },
+        [PSCustomObject]@{ Name = 'PolicyBlocked'; Pattern = 'network_access\s*=\s*false|admin-enforced policy|blocked by.{0,80}policy|security policy' }
+    )
+    $logFiles = @()
+    foreach ($relative in @('log', 'logs')) {
+        $logRoot = Join-Path $Root $relative
+        if (Test-PathReadSafe -Path $logRoot -PathType Container) {
+            $logFiles += @(Get-ChildItem -LiteralPath $logRoot -File -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.Extension -in @('.log', '.jsonl', '.txt') })
+        }
+    }
+    $logFiles = @($logFiles | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First $FileLimit)
+    $signals = foreach ($definition in $definitions) {
+        $matches = if ($logFiles.Count -gt 0) {
+            @(Select-String -LiteralPath $logFiles.FullName -Pattern $definition.Pattern -AllMatches -ErrorAction SilentlyContinue)
+        }
+        else { @() }
+        [PSCustomObject]@{ Name = $definition.Name; MatchCount = @($matches).Count; Present = @($matches).Count -gt 0 }
+    }
+    return [PSCustomObject]@{
+        FilesScanned = $logFiles.Count
+        NewestLogWriteTimeUtc = if ($logFiles.Count -gt 0) { $logFiles[0].LastWriteTimeUtc.ToString('o') } else { $null }
+        RawLogContentReturned = $false
+        Signals = @($signals)
+    }
+}
+
 function Get-WindowsCodexSnapshot {
     param([string[]]$Roots)
 
@@ -369,7 +434,7 @@ function Get-WindowsCodexSnapshot {
     catch {}
 
     return [PSCustomObject]@{
-        SchemaVersion = '1.0'
+        SchemaVersion = '1.1'
         CollectedAt = (Get-Date).ToString('o')
         OperatingSystem = $os
         CodexHome = $codexHome
@@ -399,6 +464,8 @@ function Get-WindowsCodexSnapshot {
             SessionFileCount = @(Get-ChildItem -LiteralPath $sessionPath -File -Recurse -ErrorAction SilentlyContinue).Count
             ArchivedSessionsPath = $archivedPath
             ArchivedFileCount = @(Get-ChildItem -LiteralPath $archivedPath -File -Recurse -ErrorAction SilentlyContinue).Count
+            MetadataInventory = @(Get-SessionMetadataInventory -CodexHome $codexHome)
+            TranscriptFilesGuaranteeDesktopVisibility = $false
         }
     }
 }
@@ -536,24 +603,56 @@ function Get-ChromeBridgeSnapshot {
     $validManifest = @($manifestResults | Where-Object {
         $_.Exists -and $_.ValidJson -and $_.HostExists -and $_.ExpectedOriginPresent
     }).Count -gt 0
-    $classification = if (-not $chrome.Installed) { 'chrome-missing' }
+    $staticClassification = if (-not $chrome.Installed) { 'chrome-missing' }
     elseif (-not $extensionPresent) { 'extension-missing' }
     elseif (-not $pluginPresent) { 'plugin-files-missing' }
     elseif (-not $registrationPresent -or @($manifestResults | Where-Object Exists).Count -eq 0) { 'native-host-missing' }
     elseif (-not $validManifest) { 'native-host-invalid' }
     else { 'ready-for-runtime-test' }
 
+    $nativeHostProcesses = @()
+    try {
+        $nativeHostProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'extension-host.exe'" -ErrorAction Stop | ForEach-Object {
+            [PSCustomObject]@{
+                ProcessId = [int]$_.ProcessId
+                Name = $_.Name
+                ExecutablePath = $_.ExecutablePath
+                CommandLineReturned = $false
+            }
+        })
+    }
+    catch {}
+
+    $runtimeEvidence = Get-RuntimeSignalSummary -Root $codexHome
+    function Test-RuntimeSignal {
+        param([string]$Name)
+        return @($runtimeEvidence.Signals | Where-Object { $_.Name -eq $Name -and $_.Present }).Count -gt 0
+    }
+    $classification = if ($staticClassification -ne 'ready-for-runtime-test') { $staticClassification }
+    elseif (Test-RuntimeSignal -Name 'PluginCacheFileLock') { 'plugin-cache-or-host-lock-suspected' }
+    elseif ((Test-RuntimeSignal -Name 'ExtensionBackendUnavailable') -or (Test-RuntimeSignal -Name 'OpenTabsTimeout')) { 'runtime-extension-backend-failure' }
+    elseif (Test-RuntimeSignal -Name 'PolicyBlocked') { 'task-or-site-policy-blocked' }
+    else { 'runtime-test-required' }
+
     return [PSCustomObject]@{
-        SchemaVersion = '1.0'
+        SchemaVersion = '1.1'
         CollectedAt = (Get-Date).ToString('o')
         ReadOnly = $true
         Classification = $classification
+        StaticClassification = $staticClassification
         Chrome = $chrome
         ExtensionId = $ExtensionId
         ExtensionInstalls = $extensionInstalls
         PluginRoots = $pluginRoots
         RegistryEntries = $registryEntries
         Manifests = $manifestResults
+        NativeHostProcesses = @($nativeHostProcesses)
+        RuntimeEvidence = $runtimeEvidence
+        BrowserRouting = [PSCustomObject]@{
+            Chrome = 'Use for pages already signed in through the active Google Chrome profile.'
+            BuiltInBrowser = 'Use @Browser for localhost, public pages, or browsing that should stay inside ChatGPT.'
+            OtherChromiumBrowsersSupported = $false
+        }
         ManualRegistryOrManifestCreationSupported = $false
     }
 }
@@ -590,7 +689,7 @@ $reportPath = Join-Path $outputRoot "Codex-Emergency-Report-$timestamp.md"
 $snapshotPath = Join-Path $outputRoot "Codex-Emergency-Snapshot-$timestamp.json"
 
 $snapshot = [PSCustomObject]@{
-    SchemaVersion = '1.0'
+    SchemaVersion = '1.1'
     CollectedAt = (Get-Date).ToString('o')
     ReadOnly = $true
     ExistingStateChanged = $false
@@ -631,6 +730,7 @@ Add-Line $lines "- Port 15721 listening: $([bool]$port15721.Listening)"
 Add-Line $lines "- Third-party switch/route paths still present: $($thirdPartyPaths.Count)"
 Add-Line $lines "- Session files: $($safeWindows.Sessions.SessionFileCount)"
 Add-Line $lines "- Archived session files: $($safeWindows.Sessions.ArchivedFileCount)"
+Add-Line $lines "- Nearby task index/state items (inventory only): $(@($safeWindows.Sessions.MetadataInventory).Count)"
 if ($null -ne $safeChrome) {
     Add-Line $lines "- Chrome bridge classification: $($safeChrome.Classification)"
 }
@@ -669,6 +769,12 @@ if ($null -ne $safeChrome) {
     Add-Line $lines "- Complete plugin roots found: $(@($safeChrome.PluginRoots).Count)"
     Add-Line $lines "- Native Host registry entries present: $(@($safeChrome.RegistryEntries | Where-Object Exists).Count)"
     Add-Line $lines "- Native Host manifests present: $(@($safeChrome.Manifests | Where-Object Exists).Count)"
+    Add-Line $lines "- Native Host processes: $(@($safeChrome.NativeHostProcesses).Count)"
+    Add-Line $lines "- Recent diagnostic log files scanned: $($safeChrome.RuntimeEvidence.FilesScanned)"
+    foreach ($signal in @($safeChrome.RuntimeEvidence.Signals | Where-Object Present)) {
+        Add-Line $lines "- Runtime signal: $($signal.Name) ($($signal.MatchCount))"
+    }
+    Add-Line $lines '- Use @Chrome for the active signed-in Google Chrome profile; use @Browser for localhost, public pages, or in-app browsing.'
     Add-Line $lines '- Manual registry or manifest creation is not supported by this kit.'
 }
 else {
@@ -681,6 +787,7 @@ Add-Line $lines '1. Do not post the JSON snapshot publicly. Keep it for a truste
 Add-Line $lines '2. Send this Markdown report to web ChatGPT and say: "My Codex Desktop and CLI cannot use the rescue plugin. Please interpret this read-only emergency report and explain one safe step at a time."'
 Add-Line $lines '3. Do not delete .codex, environment variables, proxy tools, or Chrome data only because they appear in this report.'
 Add-Line $lines '4. When either Desktop or CLI works again, install the full codex-windows-rescue plugin for interactive diagnosis and recovery.'
+Add-Line $lines '5. If transcript files exist but tasks are missing from the Desktop sidebar, treat that as an index/state problem; do not restore an entire old .codex directory.'
 
 [IO.File]::WriteAllLines($reportPath, $lines, [Text.UTF8Encoding]::new($false))
 Write-Host "Report created: $reportPath" -ForegroundColor Green

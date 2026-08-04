@@ -25,6 +25,35 @@ function Test-PathReadSafe {
     }
 }
 
+function Get-SessionMetadataInventory {
+    param([string]$CodexHome)
+
+    $items = @()
+    foreach ($name in @('session_index.jsonl', 'history.jsonl', '.codex-global-state.json')) {
+        $path = Join-Path $CodexHome $name
+        if (Test-PathReadSafe -Path $path -PathType Leaf) {
+            $file = Get-Item -LiteralPath $path
+            $items += [PSCustomObject]@{ Name = $name; Kind = 'File'; Bytes = [long]$file.Length; ItemCount = $null; ContentsRead = $false }
+        }
+    }
+    foreach ($file in Get-ChildItem -LiteralPath $CodexHome -File -Filter 'state_*.sqlite*' -ErrorAction SilentlyContinue) {
+        $items += [PSCustomObject]@{ Name = $file.Name; Kind = 'File'; Bytes = [long]$file.Length; ItemCount = $null; ContentsRead = $false }
+    }
+    foreach ($name in @('session_backups', 'generated_images')) {
+        $path = Join-Path $CodexHome $name
+        if (Test-PathReadSafe -Path $path -PathType Container) {
+            $items += [PSCustomObject]@{
+                Name = $name
+                Kind = 'Directory'
+                Bytes = $null
+                ItemCount = @(Get-ChildItem -LiteralPath $path -File -Recurse -ErrorAction SilentlyContinue).Count
+                ContentsRead = $false
+            }
+        }
+    }
+    return @($items | Sort-Object Name -Unique)
+}
+
 function Get-SafeEndpoint {
     param([string]$Value)
     if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
@@ -329,7 +358,7 @@ try {
 catch {}
 
 $snapshot = [PSCustomObject]@{
-    SchemaVersion = '1.0'
+    SchemaVersion = '1.1'
     CollectedAt = (Get-Date).ToString('o')
     OperatingSystem = $os
     CodexHome = $codexHome
@@ -372,6 +401,8 @@ $snapshot = [PSCustomObject]@{
         SessionFileCount = @(Get-ChildItem -LiteralPath $sessionPath -File -Recurse -ErrorAction SilentlyContinue).Count
         ArchivedSessionsPath = $archivedPath
         ArchivedFileCount = @(Get-ChildItem -LiteralPath $archivedPath -File -Recurse -ErrorAction SilentlyContinue).Count
+        MetadataInventory = @(Get-SessionMetadataInventory -CodexHome $codexHome)
+        TranscriptFilesGuaranteeDesktopVisibility = $false
     }
 }
 

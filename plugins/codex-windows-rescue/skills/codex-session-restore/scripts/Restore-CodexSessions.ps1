@@ -21,6 +21,60 @@ function Get-StringHash {
     finally { $sha.Dispose() }
 }
 
+function Get-MetadataInventory {
+    param([string[]]$Roots)
+
+    $results = @()
+    foreach ($root in $Roots) {
+        if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+        $codexRoots = @($root)
+        $codexRoots += @(Get-ChildItem -LiteralPath $root -Directory -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like '.codex*' } |
+            Select-Object -ExpandProperty FullName)
+
+        foreach ($codexRoot in @($codexRoots | Sort-Object -Unique)) {
+            foreach ($name in @('session_index.jsonl', 'history.jsonl', '.codex-global-state.json')) {
+                $path = Join-Path $codexRoot $name
+                if (Test-Path -LiteralPath $path -PathType Leaf) {
+                    $item = Get-Item -LiteralPath $path
+                    $results += [PSCustomObject]@{
+                        Root = $codexRoot
+                        Name = $name
+                        Kind = 'File'
+                        Bytes = [long]$item.Length
+                        ItemCount = $null
+                        ContentsRead = $false
+                    }
+                }
+            }
+            foreach ($item in Get-ChildItem -LiteralPath $codexRoot -File -Filter 'state_*.sqlite*' -ErrorAction SilentlyContinue) {
+                $results += [PSCustomObject]@{
+                    Root = $codexRoot
+                    Name = $item.Name
+                    Kind = 'File'
+                    Bytes = [long]$item.Length
+                    ItemCount = $null
+                    ContentsRead = $false
+                }
+            }
+            foreach ($name in @('session_backups', 'generated_images')) {
+                $path = Join-Path $codexRoot $name
+                if (Test-Path -LiteralPath $path -PathType Container) {
+                    $results += [PSCustomObject]@{
+                        Root = $codexRoot
+                        Name = $name
+                        Kind = 'Directory'
+                        Bytes = $null
+                        ItemCount = @(Get-ChildItem -LiteralPath $path -File -Recurse -ErrorAction SilentlyContinue).Count
+                        ContentsRead = $false
+                    }
+                }
+            }
+        }
+    }
+    return @($results | Sort-Object Root, Name -Unique)
+}
+
 if ([string]::IsNullOrWhiteSpace($DestinationRoot)) {
     $DestinationRoot = [Environment]::GetEnvironmentVariable('CODEX_HOME', 'Process')
     if ([string]::IsNullOrWhiteSpace($DestinationRoot)) { $DestinationRoot = Join-Path $env:USERPROFILE '.codex' }
@@ -106,8 +160,11 @@ if ($Apply) {
 }
 
 [PSCustomObject]@{
-    SchemaVersion = '1.0'
+    SchemaVersion = '1.1'
     Mode = if ($Apply) { 'Apply' } else { 'Preview' }
+    RestoreMode = 'TranscriptSalvage'
+    DesktopVisibilityGuaranteed = $false
+    AutomaticIndexOrDatabaseMerge = $false
     PlanHash = $planHash
     TrustedSourceRoots = $trustedRoots
     SessionDirectories = $sessionDirPaths
@@ -121,5 +178,7 @@ if ($Apply) {
         Verified = $verified
     }
     ExcludedState = @('auth.json', 'config.toml', 'plugins', 'cache', 'SQLite', 'logs', 'provider settings')
+    MetadataInventory = @(Get-MetadataInventory -Roots $trustedRoots)
+    VerificationRequired = @('CLI task visibility', 'Desktop sidebar visibility', 'Open or resume one restored task')
     Plan = @($plan)
 } | ConvertTo-Json -Depth 10

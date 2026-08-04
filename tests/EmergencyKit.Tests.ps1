@@ -86,8 +86,14 @@ try {
     if (-not $snapshot.ReadOnly) {
         throw 'Snapshot does not declare itself read-only.'
     }
-    if ($snapshot.SchemaVersion -ne '1.0') {
+    if ($snapshot.SchemaVersion -ne '1.1') {
         throw "Unexpected snapshot schema version: $($snapshot.SchemaVersion)"
+    }
+    if ($null -eq $snapshot.WindowsCodex.Sessions.MetadataInventory) {
+        throw 'Snapshot does not include the read-only session metadata inventory.'
+    }
+    if ($null -ne $snapshot.ChromeBridge -and $null -eq $snapshot.ChromeBridge.RuntimeEvidence) {
+        throw 'Chrome snapshot does not include redacted runtime evidence.'
     }
 
     Write-Host 'PASS: emergency kit generates redacted read-only reports without Codex.' -ForegroundColor Green

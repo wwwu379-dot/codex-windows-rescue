@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Session Restore"
-  short_description: "Restore Codex sessions without old config or plugin state"
-  default_prompt: "Use $codex-session-restore to preview and restore only sessions from my trusted backups."
+  short_description: "Salvage transcripts without merging old task state"
+  default_prompt: "Use $codex-session-restore to preview transcript salvage from my trusted backups and verify CLI and Desktop separately."
