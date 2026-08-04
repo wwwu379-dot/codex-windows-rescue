@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Chrome Support Report"
-  short_description: "Create a redacted support report for Chrome Native Host failures"
-  default_prompt: "Generate a redacted support report for my Codex Chrome connection failure without changing anything."
+  short_description: "Create a redacted report for Chrome connection failures"
+  default_prompt: "Generate a redacted report for my Codex Chrome bridge or runtime failure without changing anything."

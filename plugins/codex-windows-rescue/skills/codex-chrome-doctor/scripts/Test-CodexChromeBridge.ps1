@@ -1,6 +1,11 @@
 [CmdletBinding()]
 param(
     [string]$ExtensionId = 'hehggadaopoacecdllhhajmbjkdcmajg',
+    [string]$CodexHome,
+    [string]$ChromeUserData,
+    [string]$LocalAppData,
+    [ValidateRange(1, 100)]
+    [int]$RecentLogFileLimit = 20,
     [string]$OutputPath
 )
 
@@ -9,6 +14,58 @@ $ErrorActionPreference = 'Stop'
 
 if ($ExtensionId -notmatch '^[a-p]{32}$') {
     throw 'ExtensionId must be a 32-character Chrome extension ID.'
+}
+
+if ([string]::IsNullOrWhiteSpace($LocalAppData)) { $LocalAppData = $env:LOCALAPPDATA }
+if ([string]::IsNullOrWhiteSpace($CodexHome)) {
+    $CodexHome = [Environment]::GetEnvironmentVariable('CODEX_HOME', 'Process')
+}
+if ([string]::IsNullOrWhiteSpace($CodexHome)) { $CodexHome = Join-Path $env:USERPROFILE '.codex' }
+if ([string]::IsNullOrWhiteSpace($ChromeUserData)) {
+    $ChromeUserData = Join-Path $LocalAppData 'Google\Chrome\User Data'
+}
+
+function Get-RuntimeSignalSummary {
+    param([string]$Root, [int]$FileLimit)
+
+    $definitions = @(
+        [PSCustomObject]@{ Name = 'ExtensionBackendUnavailable'; Pattern = 'Browser is not available:\s*extension|extension backend.{0,80}unavailable' },
+        [PSCustomObject]@{ Name = 'OpenTabsTimeout'; Pattern = 'browser\.user\.openTabs|openTabs.{0,80}(timed out|timeout)' },
+        [PSCustomObject]@{ Name = 'PluginCacheFileLock'; Pattern = 'plugin_cache_windows_file_lock|bundled_plugins_.{0,120}(Access is denied|os error 5)' },
+        [PSCustomObject]@{ Name = 'NativeHostInstallRequested'; Pattern = 'chrome_native_host_install_requested' },
+        [PSCustomObject]@{ Name = 'BuiltInBrowserReady'; Pattern = 'browser_use_iab_backend_startup_ready|iab backend startup ready' },
+        [PSCustomObject]@{ Name = 'ExtensionBackendReady'; Pattern = '(extension|chrome).{0,80}backend.{0,80}startup.{0,40}ready' },
+        [PSCustomObject]@{ Name = 'PolicyBlocked'; Pattern = 'network_access\s*=\s*false|admin-enforced policy|blocked by.{0,80}policy|security policy' }
+    )
+
+    $logFiles = @()
+    foreach ($relative in @('log', 'logs')) {
+        $logRoot = Join-Path $Root $relative
+        if (Test-Path -LiteralPath $logRoot -PathType Container) {
+            $logFiles += @(Get-ChildItem -LiteralPath $logRoot -File -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.Extension -in @('.log', '.jsonl', '.txt') })
+        }
+    }
+    $logFiles = @($logFiles | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First $FileLimit)
+
+    $signals = foreach ($definition in $definitions) {
+        $matches = if ($logFiles.Count -gt 0) {
+            @(Select-String -LiteralPath $logFiles.FullName -Pattern $definition.Pattern -AllMatches -ErrorAction SilentlyContinue)
+        }
+        else { @() }
+        [PSCustomObject]@{
+            Name = $definition.Name
+            MatchCount = @($matches).Count
+            Present = @($matches).Count -gt 0
+        }
+    }
+
+    return [PSCustomObject]@{
+        FilesScanned = $logFiles.Count
+        NewestLogWriteTimeUtc = if ($logFiles.Count -gt 0) { $logFiles[0].LastWriteTimeUtc.ToString('o') } else { $null }
+        RawLogContentReturned = $false
+        Signals = @($signals)
+    }
 }
 
 $chromeCandidates = @(
@@ -26,7 +83,7 @@ else {
 }
 
 $extensionInstalls = @()
-$userData = Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'
+$userData = $ChromeUserData
 if (Test-Path -LiteralPath $userData -PathType Container) {
     $profiles = @(Get-ChildItem -LiteralPath $userData -Directory -ErrorAction SilentlyContinue | Where-Object {
         $_.Name -eq 'Default' -or $_.Name -like 'Profile *'
@@ -46,8 +103,7 @@ if (Test-Path -LiteralPath $userData -PathType Container) {
     }
 }
 
-$codexHome = [Environment]::GetEnvironmentVariable('CODEX_HOME', 'Process')
-if ([string]::IsNullOrWhiteSpace($codexHome)) { $codexHome = Join-Path $env:USERPROFILE '.codex' }
+$codexHome = [IO.Path]::GetFullPath($CodexHome)
 $pluginCache = Join-Path $codexHome 'plugins\cache'
 $pluginRoots = @()
 if (Test-Path -LiteralPath $pluginCache -PathType Container) {
@@ -86,7 +142,7 @@ foreach ($path in $registryPaths) {
     }
     $registryEntries += [PSCustomObject]@{ Path = $path; Exists = $exists; ManifestPath = $manifestPath }
 }
-$manifestCandidates += Join-Path $env:LOCALAPPDATA 'OpenAI\extension\com.openai.codexextension.json'
+$manifestCandidates += Join-Path $LocalAppData 'OpenAI\extension\com.openai.codexextension.json'
 $manifestCandidates = @($manifestCandidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
 
 $manifestResults = @()
@@ -130,24 +186,57 @@ $pluginPresent = @($pluginRoots | Where-Object { $_.BrowserClient -and $_.HostEx
 $registrationPresent = @($registryEntries | Where-Object { $_.Exists }).Count -gt 0
 $validManifest = @($manifestResults | Where-Object { $_.Exists -and $_.ValidJson -and $_.HostExists -and $_.ExpectedOriginPresent }).Count -gt 0
 
-$classification = if (-not $chrome.Installed) { 'chrome-missing' }
+$staticClassification = if (-not $chrome.Installed) { 'chrome-missing' }
 elseif (-not $extensionPresent) { 'extension-missing' }
 elseif (-not $pluginPresent) { 'plugin-files-missing' }
 elseif (-not $registrationPresent -or @($manifestResults | Where-Object { $_.Exists }).Count -eq 0) { 'native-host-missing' }
 elseif (-not $validManifest) { 'native-host-invalid' }
 else { 'ready-for-runtime-test' }
 
+$nativeHostProcesses = @()
+try {
+    $nativeHostProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'extension-host.exe'" -ErrorAction Stop | ForEach-Object {
+        [PSCustomObject]@{
+            ProcessId = [int]$_.ProcessId
+            Name = $_.Name
+            ExecutablePath = $_.ExecutablePath
+            CommandLineReturned = $false
+        }
+    })
+}
+catch {}
+
+$runtimeEvidence = Get-RuntimeSignalSummary -Root $codexHome -FileLimit $RecentLogFileLimit
+function Test-RuntimeSignal {
+    param([string]$Name)
+    return @($runtimeEvidence.Signals | Where-Object { $_.Name -eq $Name -and $_.Present }).Count -gt 0
+}
+
+$classification = if ($staticClassification -ne 'ready-for-runtime-test') { $staticClassification }
+elseif (Test-RuntimeSignal -Name 'PluginCacheFileLock') { 'plugin-cache-or-host-lock-suspected' }
+elseif ((Test-RuntimeSignal -Name 'ExtensionBackendUnavailable') -or (Test-RuntimeSignal -Name 'OpenTabsTimeout')) { 'runtime-extension-backend-failure' }
+elseif (Test-RuntimeSignal -Name 'PolicyBlocked') { 'task-or-site-policy-blocked' }
+else { 'runtime-test-required' }
+
 $result = [PSCustomObject]@{
-    SchemaVersion = '1.0'
+    SchemaVersion = '1.1'
     CollectedAt = (Get-Date).ToString('o')
     ReadOnly = $true
     Classification = $classification
+    StaticClassification = $staticClassification
     Chrome = $chrome
     ExtensionId = $ExtensionId
     ExtensionInstalls = @($extensionInstalls)
     PluginRoots = @($pluginRoots)
     RegistryEntries = @($registryEntries)
     Manifests = @($manifestResults)
+    NativeHostProcesses = @($nativeHostProcesses)
+    RuntimeEvidence = $runtimeEvidence
+    BrowserRouting = [PSCustomObject]@{
+        Chrome = 'Use for pages already signed in through the active Google Chrome profile.'
+        BuiltInBrowser = 'Use @Browser for localhost, public pages, or browsing that should stay inside ChatGPT.'
+        OtherChromiumBrowsersSupported = $false
+    }
     ManualRegistryOrManifestCreationSupported = $false
 }
 

@@ -4,9 +4,10 @@
 
 1. Run the read-only doctor.
 2. Separate ordinary HTTPS reachability from Responses WebSocket support.
-3. Check whether Codex inherited the intended proxy without changing VPN mode.
-4. If explicit `HTTP_PROXY` and `HTTPS_PROXY` are required, preserve them and verify with `codex doctor`.
-5. Check the active Codex version only after transport works.
+3. Record the current client version, then check whether Codex inherited the intended proxy without changing VPN mode.
+4. Prefer current built-in proxy behavior. If HTTPS works but WebSocket still fails, test process-scoped `HTTP_PROXY` and `HTTPS_PROXY` as a compatibility fallback.
+5. Persist explicit variables only after the controlled test succeeds, then verify in a newly started process.
+6. If the server reports a model/client mismatch after transport works, update the client and re-test.
 
 ## Previously used API key, cc-switch, DeepSeek, or a local router
 
@@ -25,18 +26,22 @@
 
 ## Computer Use works but Chrome control fails
 
-1. Confirm the Chrome extension.
-2. Confirm the Codex Chrome plugin files.
-3. Confirm the Windows Native Messaging manifest and registry registration.
-4. If the final two items are absent after official reinstall, route to `codex-chrome-support-report`.
-5. Stop repair attempts. Do not synthesize the manifest or registry entries manually.
+1. Decide whether the task actually requires the signed-in Chrome profile; use the built-in `@Browser` for localhost or public browsing.
+2. Confirm the extension exists in the active Google Chrome profile.
+3. Confirm the Codex Chrome plugin files.
+4. Confirm the Windows Native Messaging manifest and registry registration.
+5. If static checks pass, inspect Native Host processes, redacted runtime backend/cache-lock signals, current-task tool attachment, and network/site policy.
+6. Start one new task for a minimal runtime test; do not treat Computer Use or the built-in Browser as proof that Chrome works.
+7. If the official matching troubleshooting step fails, route to `codex-chrome-support-report`; when the side chat loads but control fails, include `/feedback` and the task ID.
+8. Stop repair attempts. Do not synthesize the manifest or registry entries manually.
 
 ## Chat history disappeared after reset
 
 1. Locate trusted backups.
-2. Count `sessions` and `archived_sessions` files.
+2. Inventory `sessions`, `archived_sessions`, `session_index.jsonl`, `history.jsonl`, state databases, backups, and desktop metadata.
 3. Preview collisions.
-4. Restore only those two categories without overwriting current sessions.
+4. Restore only those two transcript categories without overwriting current sessions.
+5. Verify CLI and Desktop separately. If files exist but tasks remain invisible, diagnose index/path mapping and stop instead of copying the whole old `.codex`.
 
 ## Reinstall boundary
 

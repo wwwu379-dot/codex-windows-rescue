@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Chrome Bridge Doctor"
-  short_description: "Diagnose Chrome extension and Native Host connection"
-  default_prompt: "Use $codex-chrome-doctor to locate the first failing layer in Codex Chrome control."
+  short_description: "Diagnose Chrome bridge and runtime connection failures"
+  default_prompt: "Use $codex-chrome-doctor to locate the first static or runtime failure in Codex Chrome control."

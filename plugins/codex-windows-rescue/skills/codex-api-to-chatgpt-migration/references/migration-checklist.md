@@ -74,3 +74,7 @@ At every stage, use the shared step card: finding, purpose, exact target, action
 - Shared API keys remain available to other approved software if needed.
 - v2rayN and required proxy variables remain intact.
 - Sessions and projects remain intact.
+
+## Client and model lifecycle
+
+After the network path works, a client-version or retired-model error is not evidence that DeepSeek, cc-switch, or a stale base URL is still active. Update the affected Codex surface, confirm which executable is actually running, and select a currently available model before resuming provider cleanup. Do not hardcode one preview model name into a repair plan: model availability can differ between ChatGPT sign-in and API usage and can change independently of local configuration.

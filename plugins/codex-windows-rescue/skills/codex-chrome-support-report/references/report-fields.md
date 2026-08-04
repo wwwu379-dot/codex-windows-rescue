@@ -9,8 +9,10 @@ The report may contain:
 - plugin version and required-file presence;
 - Native Host registry-key presence, never registry values beyond the redacted manifest path;
 - manifest existence, JSON validity, host-file existence, and expected-origin status;
+- Native Host process ID and redacted executable path, without its command line;
+- named runtime-signal counts from a bounded set of recent Codex logs, without matching lines;
 - whether the user confirmed the official remove/reinstall flow;
-- whether ordinary Codex and Computer Use work;
+- whether ordinary Codex, Computer Use, and the built-in Browser work;
 - the first failing layer and the supported next action.
 
 The report must exclude:
@@ -20,4 +22,5 @@ The report must exclude:
 - browsing history and page contents;
 - complete process command lines;
 - unrelated logs and screenshots;
+- matching log lines or raw log content;
 - raw manifest contents or arbitrary registry values.

@@ -1,16 +1,16 @@
 ---
 name: codex-chrome-support-report
-description: Create a redacted OpenAI support report when Codex Chrome control remains disconnected after the official Chrome plugin setup. Use for missing Windows Native Messaging manifest or registry registration, while preserving a hard boundary against hand-written product state.
+description: Create a redacted OpenAI support report when Codex Chrome control remains disconnected after official setup, including missing or invalid Native Messaging state, Connected-but-timing-out runtime failures, extension backend absence, plugin-cache locks, or task/site policy signals. Preserve a hard boundary against hand-written product state and never upload automatically.
 ---
 
 # Codex Chrome Support Report
 
-Use this skill after `$codex-chrome-doctor` has found that the Chrome extension and bundled plugin files are present but the Windows Native Messaging Host is missing or invalid after the official remove/reinstall setup flow.
+Use this skill after `$codex-chrome-doctor` has isolated a static bridge, runtime backend, cache-lock, or policy layer that remains unresolved after the matching official troubleshooting step.
 
 ## What this skill does
 
 1. Re-runs the existing read-only Chrome bridge check.
-2. Collects only safe diagnostic metadata: Windows build, Codex desktop version, Chrome version, extension/plugin presence, manifest status, registry-key presence, and user-attested setup steps.
+2. Collects only safe diagnostic metadata: Windows build, Codex desktop version, Chrome version, extension/plugin presence, manifest status, registry-key presence, Native Host process presence, redacted runtime-signal counts, and user-attested setup steps.
 3. Classifies the result without claiming more than the evidence supports.
 4. Produces a redacted Markdown report and a ready-to-paste English support request.
 5. Tells the user what must remain private and does not upload or submit the report.
@@ -36,6 +36,7 @@ For a case where the official flow was completed and Computer Use and ordinary C
 scripts\Get-CodexChromeSupportReport.ps1 `
   -OfficialSetupCompleted `
   -ComputerUseWorks `
+  -BuiltInBrowserWorks `
   -OrdinaryCodexWorks
 ```
 
@@ -62,7 +63,10 @@ scripts\Get-CodexChromeSupportReport.ps1 `
 - `native-host-missing` + official setup not completed: supported setup is still the next action.
 - `native-host-missing` + official setup completed: classify as `installer-or-product-lifecycle-failure` and stop repair attempts.
 - `native-host-invalid`: report the failing manifest fields without printing unrelated content; do not rewrite it.
-- `ready-for-runtime-test`: start a new task and perform one minimal Chrome connection test.
+- `plugin-cache-or-host-lock-suspected`: report the exact process metadata and redacted cache-lock signal; do not delete the whole cache.
+- `runtime-extension-backend-failure`: report that static registration passed but the extension backend is unavailable or timing out.
+- `task-or-site-policy-blocked`: verify task/site approvals before recommending reinstall.
+- `runtime-test-required`: start a new task and perform one minimal Chrome connection test.
 - Any other classification: continue with the corresponding read-only Chrome doctor branch.
 
 ## Handoff
@@ -76,4 +80,4 @@ The final response must state:
 - that the report is not uploaded;
 - the single safest next action.
 
-If the report classifies an installer or product lifecycle failure, tell the user to attach the report to OpenAI support and wait for an official update. After an update, rerun the read-only doctor and generate a fresh report if needed.
+If the Chrome side chat loads but control still fails, tell the user to run `/feedback` in the affected task and include the task ID with the report. If the report classifies an installer or product lifecycle failure, tell the user to attach the report to OpenAI support and wait for an official update. After an update, rerun the read-only doctor and generate a fresh report if needed.
