@@ -12,7 +12,7 @@ Use it when you see one or more of these symptoms:
 - Codex was previously connected to DeepSeek, another API provider, cc-switch, API-Switch, or a local router.
 - You later started using ChatGPT Plus/Pro/Business sign-in and want to retire only the old Codex route.
 - The desktop app and CLI appear to use different versions or configurations.
-- Computer Use works but Chrome control reports `missing native host` or cannot connect.
+- Computer Use or the built-in browser works but Chrome control reports `missing native host`, times out, or cannot connect.
 - A reset or reinstall made local conversation history disappear.
 
 ## The migration problem this plugin addresses
@@ -35,9 +35,9 @@ The plugin classifies each finding before proposing a change. It does not treat 
 - A guided API/provider-to-ChatGPT migration workflow.
 - Proxy inheritance, duplicate-client, process-lock, and selective-state checks.
 - Reversible quarantine and targeted backup instead of blind deletion.
-- Chrome Native Messaging diagnosis without synthesizing registry or manifest state.
+- Layered Chrome diagnosis covering the supported Chrome profile, Native Messaging, extension backend, cache locks, task tool attachment, and policy signals—without synthesizing registry or manifest state.
 - A redacted support report when the official Chrome setup fails to register the Native Host.
-- Session-only restore that never restores authentication, plugins, cache, provider settings, or an entire `.codex` directory.
+- Transcript-only session salvage that never restores authentication, plugins, cache, provider settings, task databases, or an entire `.codex` directory.
 
 ## Safety model
 
@@ -100,9 +100,15 @@ Start a new Codex task after installation so the new skills are loaded.
 
 ## Chrome limitation by design
 
-The plugin can inspect the full Chrome control chain: the extension, bundled Chrome plugin, Native Host manifest, registry registration, and comparison signals such as ordinary Codex or Computer Use working.
+The plugin can inspect the Chrome control chain: the supported Google Chrome profile, extension, bundled Chrome plugin, Native Host manifest, registry registration, extension backend, cache locks, and task-policy signals. A valid Native Host proves installation only; it does not prove the current task has a working Chrome backend.
+
+Use `@Chrome` when Codex must use the active signed-in Google Chrome profile. Use the built-in `@Browser` for localhost, public pages, or browsing that should stay inside ChatGPT. Other Chromium browsers are not treated as interchangeable with supported Google Chrome control.
 
 It deliberately does **not** invent or manually write `com.openai.codexextension` state. If the official remove/reinstall setup has completed but the manifest or registry registration is still missing, it classifies the case as an installer or product-lifecycle failure, generates a redacted support report, and stops. This prevents a fragile workaround from silently breaking after an update.
+
+## Session restore limitation by design
+
+The restore workflow safely copies only `sessions` and `archived_sessions`. This salvages transcript files, but newer Codex builds may also use task indexes, history files, SQLite state, and Desktop app state for sidebar discovery and resumability. The plugin inventories those stores read-only and requires separate CLI/Desktop verification; it never auto-merges an old database into a fresh installation.
 
 ## Local development
 
