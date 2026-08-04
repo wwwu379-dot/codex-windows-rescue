@@ -21,6 +21,7 @@ Read [references/chrome-control-chain.md](references/chrome-control-chain.md) to
 - Plugin files absent or disabled: use official plugin installation or enablement.
 - Manifest or registry absent: repeat the official plugin setup once after fully restarting Chrome and Codex.
 - Manifest invalid: report the invalid field without printing unrelated content.
+- `known-old-runtime-signature-update-first`: the logs contain the historical `Cannot redefine property: process` runtime signature. Record the installed desktop/plugin versions and update through the official channel before trying old cache workarounds.
 - `plugin-cache-or-host-lock-suspected`: identify the exact `extension-host.exe` process and official plugin reconciliation failure; do not delete the whole cache.
 - `runtime-extension-backend-failure`: the bridge can be valid while the current runtime does not expose or respond through the extension backend. Start one new task and retry once, then report.
 - `task-or-site-policy-blocked`: inspect the current task's network/site approval state; reinstalling the bridge does not repair a policy block.
@@ -32,5 +33,7 @@ If the Chrome side chat loads but Codex still cannot use Chrome, tell the user t
 ## Hard boundary
 
 Never manually run a bundled installer script, create `com.openai.codexextension.json`, invent `allowed_origins`, or write `NativeMessagingHosts` registry entries unless current official instructions explicitly require that exact action.
+
+Do not apply an older community cache repair solely because its screenshot resembles the current UI. Compare versions and current runtime evidence first; some widely shared Windows browser/Computer Use failures were fixed in later builds.
 
 If official remove/reinstall completes but the manifest and registry remain absent, classify it as an installer or product lifecycle failure. Produce the redacted facts listed in the reference and stop. Do not reinstall all of Codex repeatedly.

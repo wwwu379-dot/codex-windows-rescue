@@ -3,14 +3,18 @@
 ## Proxy and reconnect failures
 
 1. Record the active desktop and CLI versions. Current clients include broader proxy handling than older Windows builds, so do not apply a historical workaround before testing current behavior.
-2. Compare the intended local proxy endpoint with Windows system-proxy, user, and process settings.
-3. Verify the local listener.
-4. Run `codex doctor` when available to separate HTTP reachability from WebSocket support.
-5. If the current client still fails WebSocket while HTTPS works, test explicit process-scoped `HTTP_PROXY` and `HTTPS_PROXY` first. Only propose user-level persistence after that controlled test succeeds.
-6. Show existing and proposed redacted endpoints, explain affected applications, obtain separate confirmation, then verify in a newly started process.
-7. Do not enable TUN or global routing as a generic fix.
+2. Compare the intended local proxy endpoint with Windows system-proxy, user, and process settings, then compare every one with the proxy application's actual mixed/HTTP listener.
+3. If the application uses a random mixed port, record the before/after ports. Prefer disabling random rotation and using one fixed endpoint, or update every consumer to the same endpoint. Do not assume the historically common port `10808` is correct on another machine.
+4. Verify the exact configured listener. A browser working is not proof that Codex Desktop and the system proxy point to the same local port.
+5. Change one variable only, restart the affected client, verify, and stop when the symptom is resolved.
+6. Run `codex doctor` when available to separate HTTP reachability from WebSocket support.
+7. If the current client still fails WebSocket while HTTPS works, test explicit process-scoped `HTTP_PROXY` and `HTTPS_PROXY` first. Only propose user-level persistence after that controlled test succeeds.
+8. Show existing and proposed redacted endpoints, explain affected applications, obtain separate confirmation, then verify in a newly started process.
+9. Do not enable TUN or global routing, change DNS, clear caches, or reinstall as a generic first response.
 
 Treat explicit proxy variables as a conditional compatibility fallback, not a universal first step. Preserve a working setup across updates until a same-machine current-version test proves it is no longer needed.
+
+Do not prescribe `.codex/.env` or `supports_websockets = false` solely because a community post recommends it. First establish that the current client or custom provider reads that setting and that the symptom belongs to the HTTPS-ok/WebSocket-fails family rather than simple port drift.
 
 ## Multiple client sources
 

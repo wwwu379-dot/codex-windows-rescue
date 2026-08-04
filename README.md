@@ -8,7 +8,7 @@ This plugin is especially useful when Codex was originally configured with an AP
 
 Use it when you see one or more of these symptoms:
 
-- Codex keeps reconnecting, is unusually slow, or reports a failed WebSocket or HTTP request.
+- Codex keeps reconnecting, is unusually slow, or reports a failed WebSocket or HTTP request, including cases where a random local proxy port left Windows pointing at an old endpoint.
 - Codex was previously connected to DeepSeek, another API provider, cc-switch, API-Switch, or a local router.
 - You later started using ChatGPT Plus/Pro/Business sign-in and want to retire only the old Codex route.
 - The desktop app and CLI appear to use different versions or configurations.
@@ -30,12 +30,12 @@ The plugin classifies each finding before proposing a change. It does not treat 
 
 ## What it includes
 
-- A standalone read-only emergency audit for cases where neither Desktop nor CLI can host the plugin.
+- A standalone, offline-capable read-only emergency audit for cases where neither Desktop nor CLI can host the plugin or the PC cannot currently reach the external network.
 - A read-only Windows Codex environment audit.
 - A guided API/provider-to-ChatGPT migration workflow.
-- Proxy inheritance, duplicate-client, process-lock, and selective-state checks.
+- Proxy endpoint alignment and port-drift checks before broader WebSocket, duplicate-client, process-lock, and selective-state diagnosis.
 - Reversible quarantine and targeted backup instead of blind deletion.
-- Layered Chrome diagnosis covering the supported Chrome profile, Native Messaging, extension backend, cache locks, task tool attachment, and policy signals—without synthesizing registry or manifest state.
+- Layered Chrome diagnosis covering the supported Chrome profile, Native Messaging, extension backend, cache locks, task tool attachment, and policy signals, without synthesizing registry or manifest state.
 - A redacted support report when the official Chrome setup fails to register the Native Host.
 - Transcript-only session salvage that never restores authentication, plugins, cache, provider settings, task databases, or an entire `.codex` directory.
 
@@ -62,10 +62,21 @@ The plugin cannot run inside a Codex session that never starts. Use the standalo
 1. Download and extract the repository ZIP.
 2. Copy the self-contained `emergency-kit` folder anywhere you like, keeping its three files together.
 3. Double-click `emergency-kit/Run-CodexEmergencyAudit.cmd`.
-4. Send the generated Markdown report to web ChatGPT.
+4. Read the generated Markdown summary locally. If the PC is offline, transfer it by phone or USB to another device; sending it to web ChatGPT is optional, not required for the audit to run.
 5. When either Desktop or CLI works again, install this plugin and continue with the interactive workflow.
 
 This closes the bootstrap gap: the emergency kit is a read-only diagnostic bridge, while the plugin remains the explain-and-confirm repair layer.
+
+## Reconnect diagnosis order
+
+“Reconnecting” is a symptom family, not one root cause. The plugin checks these in order:
+
+1. **Proxy port drift:** compare the Windows system-proxy endpoint and process/user proxy endpoints with the proxy application's actual local listener. Random mixed-port rotation can make yesterday's port stale.
+2. **HTTPS works but WebSocket fails:** test current client behavior, then use process-scoped `HTTP_PROXY`/`HTTPS_PROXY` only as a controlled compatibility fallback.
+3. **App/runtime state:** first-turn state races, tool completion, child-process startup, or remote-environment hydration can present as reconnecting without a dead system proxy.
+4. **Client/model mismatch:** update only when transport works and the server or a known old runtime signature points to version incompatibility.
+
+The workflow changes one variable at a time and stops after a verified fix. It does not jump directly to TUN, global routing, DNS changes, cache deletion, or reinstalling. Community suggestions such as `.codex/.env` or `supports_websockets = false` are treated as version/provider-specific hypotheses, not universal instructions.
 
 ### If Desktop or CLI still works
 

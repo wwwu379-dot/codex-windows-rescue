@@ -1,6 +1,6 @@
 ---
 name: codex-windows-repair
-description: Apply approved, evidence-based Windows Codex repairs one reversible step at a time after a read-only audit. Use for proxy inheritance, client-source conflicts, plugin cache or process locks, targeted state backup, safe quarantine, version mismatch, or clean-reset planning. Do not use for blind cleanup, secret deletion, unsupported Chrome Native Host synthesis, or repairs without explicit per-step confirmation.
+description: Apply approved, evidence-based Windows Codex repairs one reversible step at a time after a read-only audit. Use for proxy port drift or inheritance, client-source conflicts, plugin cache or process locks, targeted state backup, safe quarantine, version mismatch, or clean-reset planning. Do not use for blind cleanup, secret deletion, unsupported Chrome Native Host synthesis, or repairs without explicit per-step confirmation.
 ---
 
 # Codex Windows Repair

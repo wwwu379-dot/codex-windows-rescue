@@ -1,6 +1,6 @@
 ---
 name: codex-windows-rescue
-description: Orchestrate safe diagnosis and recovery for Codex on Windows. Use for reconnect loops, proxy or WebSocket failures, API/cc-switch/DeepSeek migration residue, duplicate CLI installations, plugin marketplace failures, Computer Use problems, Chrome missing Native Host, damaged local state, clean-reset planning, or missing local chat history. Always diagnose read-only first and require step-by-step explanation, confirmation, verification, and rollback for every mutation.
+description: Orchestrate safe diagnosis and recovery for Codex on Windows. Use for reconnect loops including proxy port drift, proxy or WebSocket failures, API/cc-switch/DeepSeek migration residue, duplicate CLI installations, plugin marketplace failures, Computer Use problems, Chrome missing Native Host, damaged local state, clean-reset planning, or missing local chat history. Always diagnose read-only first and require step-by-step explanation, confirmation, verification, and rollback for every mutation.
 ---
 
 # Codex Windows Rescue
@@ -13,7 +13,7 @@ Read [references/safety-protocol.md](references/safety-protocol.md) before propo
 
 ## Bootstrap boundary
 
-If the user's Codex Desktop cannot answer and no CLI session can load this plugin, do not pretend the plugin can repair its own unavailable host. Direct the user to the repository's standalone `emergency-kit/Run-CodexEmergencyAudit.cmd`. It creates a redacted read-only report that can be interpreted in web ChatGPT. Resume the plugin workflow only after Desktop or CLI can host an agent again.
+If the user's Codex Desktop cannot answer and no CLI session can load this plugin, do not pretend the plugin can repair its own unavailable host. Direct the user to the repository's standalone `emergency-kit/Run-CodexEmergencyAudit.cmd`. It runs without Codex or network access and creates a local redacted read-only report. If the PC also lacks external access, the user can read the Markdown summary locally or transfer it to another device; web ChatGPT is an optional interpretation channel, not a runtime dependency. Resume the plugin workflow only after Desktop or CLI can host an agent again.
 
 ## Route the task
 

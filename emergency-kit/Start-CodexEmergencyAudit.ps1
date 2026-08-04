@@ -122,7 +122,7 @@ function Get-ConfigKeyMatches {
     if (-not (Test-PathReadSafe -Path $Path -PathType Leaf)) { return @() }
 
     $patterns = @(
-        '^\s*(model_provider|openai_base_url|chatgpt_base_url|base_url|api_key|api_key_env_var|forced_login_method|profile)\s*=',
+        '^\s*(model_provider|openai_base_url|chatgpt_base_url|base_url|api_key|api_key_env_var|forced_login_method|profile|supports_websockets)\s*=',
         '^\s*\[(model_providers(?:\.[^\]]+)?|profiles(?:\.[^\]]+)?)\s*\]',
         '^\s*(env_key|experimental_bearer_token|requires_openai_auth)\s*='
     )
@@ -144,14 +144,112 @@ function Get-PortSummary {
     param([int]$Port)
     try {
         $items = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop)
+        $processIds = @($items | Select-Object -ExpandProperty OwningProcess -Unique)
+        $processNames = @($processIds | ForEach-Object {
+            try { (Get-Process -Id $_ -ErrorAction Stop).ProcessName } catch { $null }
+        } | Where-Object { $_ } | Sort-Object -Unique)
         return [PSCustomObject]@{
             Port = $Port
             Listening = $items.Count -gt 0
-            OwningProcessIds = @($items | Select-Object -ExpandProperty OwningProcess -Unique)
+            OwningProcessIds = $processIds
+            OwningProcessNames = $processNames
         }
     }
     catch {
-        return [PSCustomObject]@{ Port = $Port; Listening = $false; OwningProcessIds = @() }
+        return [PSCustomObject]@{ Port = $Port; Listening = $false; OwningProcessIds = @(); OwningProcessNames = @() }
+    }
+}
+
+function ConvertTo-ProxyEndpoints {
+    param(
+        [string]$Value,
+        [string]$Source,
+        [string]$Scope,
+        [string]$DefaultProtocol = 'http'
+    )
+    if ([string]::IsNullOrWhiteSpace($Value)) { return @() }
+    $results = @()
+    foreach ($part in @($Value -split ';')) {
+        $candidate = $part.Trim()
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        $protocol = $DefaultProtocol
+        if ($candidate -match '^(?<protocol>[A-Za-z][A-Za-z0-9+.-]*)=(?<endpoint>.+)$') {
+            $protocol = $Matches.protocol.ToLowerInvariant()
+            $candidate = $Matches.endpoint.Trim()
+        }
+        $uriText = if ($candidate -match '^[A-Za-z][A-Za-z0-9+.-]*://') { $candidate } else { '{0}://{1}' -f $protocol, $candidate }
+        try {
+            $uri = [Uri]$uriText
+            if (-not $uri.IsAbsoluteUri -or [string]::IsNullOrWhiteSpace($uri.Host)) { throw 'Not an absolute proxy URI.' }
+            $endpointHost = $uri.Host.ToLowerInvariant()
+            $results += [PSCustomObject]@{
+                Source = $Source; Scope = $Scope; Protocol = $protocol; Scheme = $uri.Scheme
+                Host = $endpointHost; Port = [int]$uri.Port
+                IsLoopback = $endpointHost -in @('127.0.0.1', 'localhost', '::1')
+                CredentialsPresent = -not [string]::IsNullOrWhiteSpace($uri.UserInfo)
+                Parsed = $true
+            }
+        }
+        catch {
+            $results += [PSCustomObject]@{
+                Source = $Source; Scope = $Scope; Protocol = $protocol; Scheme = $null
+                Host = '<unparsed>'; Port = $null; IsLoopback = $false
+                CredentialsPresent = $candidate -match '@'; Parsed = $false
+                ParseErrorType = $_.Exception.GetType().FullName
+            }
+        }
+    }
+    return @($results)
+}
+
+function Get-ProxyAlignmentSnapshot {
+    $endpoints = @()
+    foreach ($name in @('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')) {
+        foreach ($scope in @('Process', 'User', 'Machine')) {
+            $value = [Environment]::GetEnvironmentVariable($name, $scope)
+            if (-not [string]::IsNullOrWhiteSpace($value)) {
+                $protocol = ($name -replace '_PROXY$', '').ToLowerInvariant()
+                $endpoints += @(ConvertTo-ProxyEndpoints -Value $value -Source $name -Scope $scope -DefaultProtocol $protocol)
+            }
+        }
+    }
+
+    $winInet = [ordered]@{ Available = $false; ProxyEnabled = $null; ProxyServerPresent = $false }
+    try {
+        $settings = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop
+        $winInet.Available = $true
+        $winInet.ProxyEnabled = [bool]$settings.ProxyEnable
+        $winInet.ProxyServerPresent = -not [string]::IsNullOrWhiteSpace([string]$settings.ProxyServer)
+        if ($winInet.ProxyEnabled -and $winInet.ProxyServerPresent) {
+            $endpoints += @(ConvertTo-ProxyEndpoints -Value ([string]$settings.ProxyServer) -Source 'WinInet' -Scope 'User' -DefaultProtocol 'http')
+        }
+    }
+    catch {}
+
+    $loopbackEndpoints = @($endpoints | Where-Object { $_.Parsed -and $_.IsLoopback -and $_.Port })
+    $configuredPorts = @($loopbackEndpoints | Select-Object -ExpandProperty Port -Unique | Sort-Object)
+    $ports = @(@(10808, 15721) + $configuredPorts | Sort-Object -Unique)
+    $listeners = @($ports | ForEach-Object { Get-PortSummary -Port ([int]$_) })
+    $unmatched = @($loopbackEndpoints | Where-Object {
+        $port = $_.Port
+        -not (@($listeners | Where-Object { $_.Port -eq $port -and $_.Listening }).Count -gt 0)
+    })
+    $classification = if ($configuredPorts.Count -gt 1) { 'mixed-endpoint-configuration' }
+    elseif ($loopbackEndpoints.Count -eq 0) {
+        if ($winInet.Available -and $winInet.ProxyEnabled -eq $false) { 'system-proxy-disabled' } else { 'no-local-proxy-endpoint' }
+    }
+    elseif ($unmatched.Count -gt 0) { 'proxy-endpoint-not-listening' }
+    else { 'proxy-endpoint-listening' }
+
+    return [PSCustomObject]@{
+        Classification = $classification
+        PortDriftSuspected = ($classification -in @('mixed-endpoint-configuration', 'proxy-endpoint-not-listening'))
+        WinInet = [PSCustomObject]$winInet
+        Endpoints = @($endpoints)
+        ConfiguredLoopbackPorts = $configuredPorts
+        LocalListeners = $listeners
+        RandomPortSettingInspected = $false
+        NetworkRequestsPerformed = $false
     }
 }
 
@@ -291,6 +389,7 @@ function Get-RuntimeSignalSummary {
         [PSCustomObject]@{ Name = 'OpenTabsTimeout'; Pattern = 'browser\.user\.openTabs|openTabs.{0,80}(timed out|timeout)' },
         [PSCustomObject]@{ Name = 'PluginCacheFileLock'; Pattern = 'plugin_cache_windows_file_lock|bundled_plugins_.{0,120}(Access is denied|os error 5)' },
         [PSCustomObject]@{ Name = 'NativeHostInstallRequested'; Pattern = 'chrome_native_host_install_requested' },
+        [PSCustomObject]@{ Name = 'KnownOldRuntimeProcessRedefinition'; Pattern = 'Cannot redefine property:\s*process' },
         [PSCustomObject]@{ Name = 'BuiltInBrowserReady'; Pattern = 'browser_use_iab_backend_startup_ready|iab backend startup ready' },
         [PSCustomObject]@{ Name = 'ExtensionBackendReady'; Pattern = '(extension|chrome).{0,80}backend.{0,80}startup.{0,40}ready' },
         [PSCustomObject]@{ Name = 'PolicyBlocked'; Pattern = 'network_access\s*=\s*false|admin-enforced policy|blocked by.{0,80}policy|security policy' }
@@ -416,6 +515,7 @@ function Get-WindowsCodexSnapshot {
     foreach ($name in @('OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN')) {
         $environment += Get-EnvironmentSummary -Name $name -Secret
     }
+    $proxyAlignment = Get-ProxyAlignmentSnapshot
 
     $pluginSources = Join-Path $codexHome 'plugins\sources'
     $pluginCache = Join-Path $codexHome 'plugins\cache'
@@ -434,7 +534,7 @@ function Get-WindowsCodexSnapshot {
     catch {}
 
     return [PSCustomObject]@{
-        SchemaVersion = '1.1'
+        SchemaVersion = '1.2'
         CollectedAt = (Get-Date).ToString('o')
         OperatingSystem = $os
         CodexHome = $codexHome
@@ -446,10 +546,17 @@ function Get-WindowsCodexSnapshot {
         CommandSources = $commandSources
         AppxPackages = $appxPackages
         Configuration = $configuration
+        DotEnv = [PSCustomObject]@{
+            Path = Join-Path $codexHome '.env'
+            Exists = Test-PathReadSafe -Path (Join-Path $codexHome '.env') -PathType Leaf
+            ContentsRead = $false
+            AutomaticLoadingAssumed = $false
+        }
         Environment = @($environment)
         RelevantProcesses = $processes
         PersistenceIndicators = @(Get-PersistenceIndicators)
-        Ports = @((Get-PortSummary -Port 10808), (Get-PortSummary -Port 15721))
+        Ports = @($proxyAlignment.LocalListeners)
+        ProxyAlignment = $proxyAlignment
         CandidatePaths = $candidatePaths
         Plugins = [PSCustomObject]@{
             SourcesPath = $pluginSources
@@ -629,6 +736,7 @@ function Get-ChromeBridgeSnapshot {
         return @($runtimeEvidence.Signals | Where-Object { $_.Name -eq $Name -and $_.Present }).Count -gt 0
     }
     $classification = if ($staticClassification -ne 'ready-for-runtime-test') { $staticClassification }
+    elseif (Test-RuntimeSignal -Name 'KnownOldRuntimeProcessRedefinition') { 'known-old-runtime-signature-update-first' }
     elseif (Test-RuntimeSignal -Name 'PluginCacheFileLock') { 'plugin-cache-or-host-lock-suspected' }
     elseif ((Test-RuntimeSignal -Name 'ExtensionBackendUnavailable') -or (Test-RuntimeSignal -Name 'OpenTabsTimeout')) { 'runtime-extension-backend-failure' }
     elseif (Test-RuntimeSignal -Name 'PolicyBlocked') { 'task-or-site-policy-blocked' }
@@ -689,7 +797,7 @@ $reportPath = Join-Path $outputRoot "Codex-Emergency-Report-$timestamp.md"
 $snapshotPath = Join-Path $outputRoot "Codex-Emergency-Snapshot-$timestamp.json"
 
 $snapshot = [PSCustomObject]@{
-    SchemaVersion = '1.1'
+    SchemaVersion = '1.2'
     CollectedAt = (Get-Date).ToString('o')
     ReadOnly = $true
     ExistingStateChanged = $false
@@ -710,7 +818,8 @@ $thirdPartyPaths = @($safeWindows.CandidatePaths | Where-Object {
 $lines = [Collections.Generic.List[string]]::new()
 Add-Line $lines '# Codex Windows Emergency Audit'
 Add-Line $lines
-Add-Line $lines 'Use this report when Codex Desktop cannot answer and the CLI cannot load the rescue plugin.'
+Add-Line $lines 'Use this report when Codex Desktop cannot answer, the CLI cannot load the rescue plugin, or this PC currently cannot reach the external network.'
+Add-Line $lines 'The audit itself is fully local and performs no network requests.'
 Add-Line $lines
 Add-Line $lines '## Read-only guarantee'
 Add-Line $lines
@@ -725,6 +834,8 @@ Add-Line $lines "- Plugin sources directory: $(Get-PresenceLabel $safeWindows.Pl
 Add-Line $lines "- Plugin marketplaces in cache: $($safeWindows.Plugins.MarketplaceCount)"
 Add-Line $lines "- HTTP_PROXY present in any scope: $(@($httpProxy.Scopes | Where-Object Present).Count -gt 0)"
 Add-Line $lines "- HTTPS_PROXY present in any scope: $(@($httpsProxy.Scopes | Where-Object Present).Count -gt 0)"
+Add-Line $lines "- Proxy endpoint alignment: $($safeWindows.ProxyAlignment.Classification)"
+Add-Line $lines "- Proxy port drift suspected: $($safeWindows.ProxyAlignment.PortDriftSuspected)"
 Add-Line $lines "- Port 10808 listening: $([bool]$port10808.Listening)"
 Add-Line $lines "- Port 15721 listening: $([bool]$port15721.Listening)"
 Add-Line $lines "- Third-party switch/route paths still present: $($thirdPartyPaths.Count)"
@@ -783,11 +894,13 @@ else {
 Add-Line $lines
 Add-Line $lines '## What to do next'
 Add-Line $lines
-Add-Line $lines '1. Do not post the JSON snapshot publicly. Keep it for a trusted support session.'
-Add-Line $lines '2. Send this Markdown report to web ChatGPT and say: "My Codex Desktop and CLI cannot use the rescue plugin. Please interpret this read-only emergency report and explain one safe step at a time."'
-Add-Line $lines '3. Do not delete .codex, environment variables, proxy tools, or Chrome data only because they appear in this report.'
-Add-Line $lines '4. When either Desktop or CLI works again, install the full codex-windows-rescue plugin for interactive diagnosis and recovery.'
-Add-Line $lines '5. If transcript files exist but tasks are missing from the Desktop sidebar, treat that as an index/state problem; do not restore an entire old .codex directory.'
+Add-Line $lines '1. Check "Proxy endpoint alignment" first. If it says proxy-endpoint-not-listening or mixed-endpoint-configuration, compare the Windows system-proxy port with the proxy application actual mixed/HTTP listening port. A random-port setting can make yesterday''s port stale.'
+Add-Line $lines '2. Change only one setting at a time. Do not jump directly to TUN, global routing, DNS changes, cache deletion, or reinstalling.'
+Add-Line $lines '3. Do not post the JSON snapshot publicly. Keep it for a trusted support session.'
+Add-Line $lines '4. If this PC has no external access, read the Markdown summary locally or copy it by USB/phone to another device. When web ChatGPT is available, ask it to interpret one safe step at a time.'
+Add-Line $lines '5. Do not delete .codex, environment variables, proxy tools, or Chrome data only because they appear in this report.'
+Add-Line $lines '6. When either Desktop or CLI works again, install the full codex-windows-rescue plugin for interactive diagnosis and recovery.'
+Add-Line $lines '7. If transcript files exist but tasks are missing from the Desktop sidebar, treat that as an index/state problem; do not restore an entire old .codex directory.'
 
 [IO.File]::WriteAllLines($reportPath, $lines, [Text.UTF8Encoding]::new($false))
 Write-Host "Report created: $reportPath" -ForegroundColor Green

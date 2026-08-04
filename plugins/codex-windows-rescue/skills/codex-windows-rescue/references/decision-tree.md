@@ -3,11 +3,22 @@
 ## Reconnect loop, slow responses, or stream disconnected
 
 1. Run the read-only doctor.
-2. Separate ordinary HTTPS reachability from Responses WebSocket support.
-3. Record the current client version, then check whether Codex inherited the intended proxy without changing VPN mode.
-4. Prefer current built-in proxy behavior. If HTTPS works but WebSocket still fails, test process-scoped `HTTP_PROXY` and `HTTPS_PROXY` as a compatibility fallback.
-5. Persist explicit variables only after the controlled test succeeds, then verify in a newly started process.
-6. If the server reports a model/client mismatch after transport works, update the client and re-test.
+2. Compare the Windows system-proxy endpoint, process/user proxy endpoints, and the proxy application's actual mixed/HTTP listener. A random-port feature can leave Windows or Codex pointing at yesterday's port even while ordinary browser traffic appears normal.
+3. If the configured loopback port is not listening, or different layers use different ports, align one fixed endpoint and verify before changing anything else. Do not combine this test with TUN, global routing, DNS, cache, or reinstall changes.
+4. If endpoints align, separate ordinary HTTPS reachability from Responses WebSocket support.
+5. Record the current client version and prefer current built-in proxy behavior. If HTTPS works but WebSocket still fails, test process-scoped `HTTP_PROXY` and `HTTPS_PROXY` as a compatibility fallback.
+6. Treat `.codex/.env` and custom-provider `supports_websockets = false` as version/provider-specific ideas, not universal fixes. Do not assume `.env` is automatically loaded without current evidence.
+7. If reconnecting happens only on the first turn, after tool calls, during remote-environment hydration, or while the app-server connection itself remains alive, classify it as an application/state family rather than a proxy-port failure.
+8. Persist explicit variables only after the controlled test succeeds, then verify in a newly started process.
+9. If the server reports a model/client mismatch after transport works, update the client and re-test.
+
+Use these reconnect families in the report:
+
+- `proxy-port-drift`: configured local endpoint does not match a listener, often after random-port rotation.
+- `https-ok-websocket-fails`: ordinary requests work but the Responses WebSocket path does not.
+- `app-state-or-runtime-race`: reconnecting is tied to first-turn state, tool completion, child-process startup, or remote hydration.
+- `client-or-model-version-mismatch`: transport works and the server explicitly requires a newer client.
+- `unclassified`: evidence is insufficient; change nothing and collect one more targeted observation.
 
 ## Previously used API key, cc-switch, DeepSeek, or a local router
 

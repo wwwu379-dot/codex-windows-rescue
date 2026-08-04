@@ -33,6 +33,7 @@ function Get-RuntimeSignalSummary {
         [PSCustomObject]@{ Name = 'OpenTabsTimeout'; Pattern = 'browser\.user\.openTabs|openTabs.{0,80}(timed out|timeout)' },
         [PSCustomObject]@{ Name = 'PluginCacheFileLock'; Pattern = 'plugin_cache_windows_file_lock|bundled_plugins_.{0,120}(Access is denied|os error 5)' },
         [PSCustomObject]@{ Name = 'NativeHostInstallRequested'; Pattern = 'chrome_native_host_install_requested' },
+        [PSCustomObject]@{ Name = 'KnownOldRuntimeProcessRedefinition'; Pattern = 'Cannot redefine property:\s*process' },
         [PSCustomObject]@{ Name = 'BuiltInBrowserReady'; Pattern = 'browser_use_iab_backend_startup_ready|iab backend startup ready' },
         [PSCustomObject]@{ Name = 'ExtensionBackendReady'; Pattern = '(extension|chrome).{0,80}backend.{0,80}startup.{0,40}ready' },
         [PSCustomObject]@{ Name = 'PolicyBlocked'; Pattern = 'network_access\s*=\s*false|admin-enforced policy|blocked by.{0,80}policy|security policy' }
@@ -213,6 +214,7 @@ function Test-RuntimeSignal {
 }
 
 $classification = if ($staticClassification -ne 'ready-for-runtime-test') { $staticClassification }
+elseif (Test-RuntimeSignal -Name 'KnownOldRuntimeProcessRedefinition') { 'known-old-runtime-signature-update-first' }
 elseif (Test-RuntimeSignal -Name 'PluginCacheFileLock') { 'plugin-cache-or-host-lock-suspected' }
 elseif ((Test-RuntimeSignal -Name 'ExtensionBackendUnavailable') -or (Test-RuntimeSignal -Name 'OpenTabsTimeout')) { 'runtime-extension-backend-failure' }
 elseif (Test-RuntimeSignal -Name 'PolicyBlocked') { 'task-or-site-policy-blocked' }

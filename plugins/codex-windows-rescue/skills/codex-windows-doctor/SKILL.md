@@ -1,6 +1,6 @@
 ---
 name: codex-windows-doctor
-description: Perform a read-only Windows Codex audit covering installation sources, versions, authentication mode without reading credentials, version-aware proxy behavior, WebSocket prerequisites, configuration layers, custom providers, cc-switch/API-Switch residue, running processes and ports, plugins, Chrome Native Host registration, and transcript/index state. Use before any Codex repair, reset, reinstall, migration, or residue cleanup.
+description: Perform a read-only Windows Codex audit covering proxy port drift and random-port symptoms, installation sources, versions, authentication mode without reading credentials, version-aware WebSocket behavior, configuration layers, custom providers, cc-switch/API-Switch residue, running processes and ports, plugins, Chrome Native Host registration, and transcript/index state. Use before any Codex repair, reset, reinstall, migration, or residue cleanup.
 ---
 
 # Codex Windows Doctor
@@ -26,6 +26,10 @@ Classify every finding as:
 Do not label `.codex`, AppX state, runtime caches, or running Codex processes as residue merely because they exist while Codex is installed.
 
 Do not assume an explicit proxy workaround is permanently required merely because it fixed an older build. Record the current client version and retest current built-in proxy handling before recommending process-scoped `HTTP_PROXY` or `HTTPS_PROXY`; persist variables only after a controlled test proves they are still necessary.
+
+For reconnect loops, inspect endpoint alignment before broader network theory. Compare the Windows system proxy and process/user proxy variables with the actual local listener. If the configured port is stale or multiple layers disagree, classify possible port drift and ask whether the proxy application's random-port option changed. Change and verify one variable at a time.
+
+Do not assume `.codex/.env` is automatically loaded. The snapshot reports only whether it exists. Treat `supports_websockets = false` as a custom-provider compatibility option that requires current evidence, not a universal reconnect fix.
 
 Treat `sessions`/`archived_sessions` transcript counts separately from task discovery state. The snapshot inventories index and SQLite sidecars without reading them; their presence is evidence for follow-up, not permission to merge or replace current state.
 

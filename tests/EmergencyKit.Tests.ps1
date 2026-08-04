@@ -36,6 +36,9 @@ try {
     if ($source -match '(?i)\b(Remove-Item|Set-ItemProperty|New-ItemProperty|Stop-Process|Remove-AppxPackage|setx)\b') {
         throw 'Emergency audit contains a forbidden mutation command.'
     }
+    if ($source -match '(?i)\b(Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer|curl(?:\.exe)?|wget(?:\.exe)?|Test-NetConnection|Resolve-DnsName)\b') {
+        throw 'Emergency audit contains a forbidden network command.'
+    }
 
     [void](New-Item -ItemType Directory -Path $testRoot -Force)
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'emergency-kit') -Destination $isolatedKit -Recurse
@@ -66,6 +69,7 @@ try {
         'Codex Windows Emergency Audit',
         'Read-only guarantee',
         'What to do next',
+        'The audit itself is fully local and performs no network requests.',
         'No existing files, registry entries, environment variables, processes, services, tasks, or applications were changed; only these diagnostic report files were created.'
     )) {
         if ($report -notlike "*$requiredText*") {
@@ -86,8 +90,17 @@ try {
     if (-not $snapshot.ReadOnly) {
         throw 'Snapshot does not declare itself read-only.'
     }
-    if ($snapshot.SchemaVersion -ne '1.1') {
+    if ($snapshot.SchemaVersion -ne '1.2') {
         throw "Unexpected snapshot schema version: $($snapshot.SchemaVersion)"
+    }
+    if ($snapshot.WindowsCodex.SchemaVersion -ne '1.2') {
+        throw "Unexpected Windows snapshot schema version: $($snapshot.WindowsCodex.SchemaVersion)"
+    }
+    if ($snapshot.WindowsCodex.ProxyAlignment.NetworkRequestsPerformed -ne $false) {
+        throw 'Emergency proxy alignment unexpectedly performed network requests.'
+    }
+    if (@($snapshot.WindowsCodex.ProxyAlignment.Endpoints | Where-Object { $_.Source -eq 'HTTP_PROXY' -and $_.Port -eq 10808 }).Count -eq 0) {
+        throw 'Emergency audit did not parse the configured loopback proxy endpoint.'
     }
     if ($null -eq $snapshot.WindowsCodex.Sessions.MetadataInventory) {
         throw 'Snapshot does not include the read-only session metadata inventory.'

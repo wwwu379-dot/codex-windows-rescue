@@ -39,6 +39,8 @@ Static success does not prove runtime success. Distinguish these cases:
 
 Use recent logs only as redacted signals: return signal names and counts, never matching lines or full log content. A stale signal is supporting evidence, not proof of the current failure.
 
+If recent evidence contains `Cannot redefine property: process`, classify it as a known historical runtime signature and update the desktop/plugin through the official channel first. Do not assume the same old cache workaround applies to a current build.
+
 ## Choose the right browser
 
 - Use `@Chrome` when the task needs the user's existing signed-in Chrome profile, open tabs, or selected page text.

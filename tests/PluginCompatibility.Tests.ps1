@@ -7,6 +7,8 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $pluginRoot = Join-Path $repositoryRoot 'plugins\codex-windows-rescue'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('codex-windows-rescue-test-' + [Guid]::NewGuid().ToString('N'))
+$previousHttpProxy = $env:HTTP_PROXY
+$previousHttpsProxy = $env:HTTPS_PROXY
 
 try {
     foreach ($script in Get-ChildItem -LiteralPath $repositoryRoot -Filter '*.ps1' -File -Recurse) {
@@ -17,7 +19,7 @@ try {
     }
 
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $pluginRoot '.codex-plugin\plugin.json') | ConvertFrom-Json
-    if ($manifest.version -notmatch '^0\.2\.0\+codex\.\d{14}$') { throw "Unexpected plugin version: $($manifest.version)" }
+    if ($manifest.version -notmatch '^0\.3\.0\+codex\.\d{14}$') { throw "Unexpected plugin version: $($manifest.version)" }
     if ($manifest.interface.defaultPrompt.Count -gt 3) { throw 'Plugin manifest has more than three default prompts.' }
 
     foreach ($skill in Get-ChildItem -LiteralPath (Join-Path $pluginRoot 'skills') -Directory) {
@@ -68,9 +70,28 @@ SECRET-LINE-SHOULD-NOT-BE-RETURNED
     $chromeJson = $chrome | ConvertTo-Json -Depth 12
     if ($chromeJson -like '*SECRET-LINE-SHOULD-NOT-BE-RETURNED*') { throw 'Chrome doctor leaked raw log content.' }
 
+    $env:HTTP_PROXY = 'http://test-user:test-password@127.0.0.1:45678'
+    $env:HTTPS_PROXY = 'http://127.0.0.1:45678'
+    $proxyScript = Join-Path $pluginRoot 'skills\codex-windows-repair\scripts\Get-CodexProxySnapshot.ps1'
+    $proxyText = & $proxyScript | Out-String
+    $proxy = $proxyText | ConvertFrom-Json
+    if ($proxy.SchemaVersion -ne '1.1' -or -not $proxy.ReadOnly -or $proxy.NetworkRequestsPerformed) { throw 'Proxy snapshot safety/schema is outdated.' }
+    if (@($proxy.Endpoints | Where-Object { $_.Source -eq 'HTTP_PROXY' -and $_.Port -eq 45678 }).Count -eq 0) { throw 'Proxy snapshot did not parse the configured loopback endpoint.' }
+    if ($proxyText -like '*test-user*' -or $proxyText -like '*test-password*') { throw 'Proxy snapshot leaked proxy credentials.' }
+    if ($proxy.Classification -notin @('proxy-endpoint-not-listening', 'mixed-endpoint-configuration')) { throw "Unexpected synthetic proxy classification: $($proxy.Classification)" }
+
+    $doctorScript = Join-Path $pluginRoot 'skills\codex-windows-doctor\scripts\Get-CodexWindowsSnapshot.ps1'
+    $doctorText = & $doctorScript | Out-String
+    $doctor = $doctorText | ConvertFrom-Json
+    if ($doctor.SchemaVersion -ne '1.2' -or $doctor.ProxyAlignment.NetworkRequestsPerformed -ne $false) { throw 'Windows doctor proxy/schema update is missing.' }
+    if ($doctor.DotEnv.ContentsRead -ne $false -or $doctor.DotEnv.AutomaticLoadingAssumed -ne $false) { throw 'Windows doctor overstates or reads .codex/.env behavior.' }
+    if ($doctorText -like '*test-user*' -or $doctorText -like '*test-password*') { throw 'Windows doctor leaked proxy credentials.' }
+
     Write-Host 'PASS: plugin compatibility checks completed.' -ForegroundColor Green
 }
 finally {
+    $env:HTTP_PROXY = $previousHttpProxy
+    $env:HTTPS_PROXY = $previousHttpsProxy
     if (Test-Path -LiteralPath $testRoot) {
         Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
